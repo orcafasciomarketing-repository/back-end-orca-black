@@ -9,7 +9,7 @@ exports.findById = async (id) => {
 };
 
 exports.findByRdId = async(rdUserId) =>{
-  return await Vendors.find({ rdUserId })
+  return await Vendors.findOne({ rdUserId })
 }
 
 exports.findByTeam = async (teamId) => {
