@@ -77,6 +77,8 @@ exports.rdDealEventProcess = async (salesData) => {
     return;
   }
 
+  console.log(saleObject);
+
   const vendor = await VendorRepository.findByRdId(saleObject.rdUserId);
 
   if (!vendor) {

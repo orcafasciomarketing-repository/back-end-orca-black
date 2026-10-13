@@ -44,6 +44,43 @@ exports.getScoreboard = async (period) => {
     .sort((a, b) => b.total - a.total);
 };
 
+exports.getLastWeekScoreboard = async () => {
+  const [teams, vendors, salesResult] = await Promise.all([
+    TeamsService.findAll(),
+    VendorsService.findAll(),
+    SalesService.findByExactWeek(),
+  ]);
+
+  const vendorTeamMap = new Map(
+    vendors.map((vendor) => [vendor._id.toString(), vendor.teamId.toString()]),
+  );
+
+  const teamPointsMap = new Map(
+    teams.map((team) => [
+      team._id.toString(),
+      {
+        teamId: team._id,
+        teamName: team.name,
+        farm: 0,
+        sales: 0,
+        passage: 0,
+        //teamShirt: team.imageUrl,
+      },
+    ]),
+  );
+
+  for (const sale of salesResult.data) {
+    const teamId = vendorTeamMap.get(sale.vendorId._id.toString());
+    teamPointsMap.get(teamId)[sale.funnelType] += pointsMap.get(
+      sale.funnelType,
+    );
+  }
+
+  return Array.from(teamPointsMap.values())
+    .map((team) => ({ ...team, total: team.farm + team.sales + team.passage }))
+    .sort((a, b) => b.total - a.total);
+};
+
 exports.getVendorRank = async (period) => {
   const [vendors, salesResult] = await Promise.all([
     VendorsService.findAll(),
@@ -101,39 +138,6 @@ exports.getSdrRank = async (period) => {
     }))
     .sort((a, b) => b.goals - a.goals)
     .slice(0, 3);
-};
-
-exports.getLastWeekScoreboard = async () => {
-  const [teams, vendors, salesResult] = await Promise.all([
-    TeamsService.findAll(),
-    VendorsService.findAll(),
-    SalesService.findByExactWeek(),
-  ]);
-
-  const vendorTeamMap = new Map(
-    vendors.map((vendor) => [vendor._id.toString(), vendor.teamId.toString()]),
-  );
-
-  const teamGoalsMap = new Map(
-    teams.map((team) => [
-      team._id.toString(),
-      {
-        teamId: team._id,
-        teamName: team.name,
-        goals: 0,
-        teamShirt: team.imageUrl,
-      },
-    ]),
-  );
-
-  for (const sale of salesResult.data) {
-    const teamId = vendorTeamMap.get(sale.vendor._id.toString());
-    if (teamId && teamGoalsMap.has(teamId)) {
-      teamGoalsMap.get(teamId).goals++;
-    }
-  }
-
-  return Array.from(teamGoalsMap.values()).sort((a, b) => b.goals - a.goals);
 };
 
 exports.getLastWeekVendorRank = async () => {

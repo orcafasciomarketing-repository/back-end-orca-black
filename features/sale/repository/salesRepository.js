@@ -24,7 +24,7 @@ exports.findAll = async (page, limit) => {
 exports.findByPeriod = async (page, limit, startDate, endDate) => {
   const filter = { realizedAt: { $gte: startDate, $lte: endDate } };
   const hasPagination = page !== undefined && limit !== undefined;
-  let query = Sales.find(filter).populate("vendor").populate("sdrId");
+  let query = Sales.find(filter).populate("vendorId").populate("sdrId");
   if (hasPagination) {
     query = query.skip((page - 1) * limit).limit(limit);
   }
