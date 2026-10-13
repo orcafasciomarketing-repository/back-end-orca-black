@@ -3,6 +3,8 @@ const SalesService = require("../../sale/service/salesService");
 const SdrService = require("../../sdr/service/sdrService");
 const TeamsService = require("../../teams/service/teamsService");
 
+const { pointsMap } = require("../../../config/points.js");
+
 exports.getScoreboard = async (period) => {
   const [teams, vendors, salesResult] = await Promise.all([
     TeamsService.findAll(),
@@ -10,23 +12,36 @@ exports.getScoreboard = async (period) => {
     period === "week" ? SalesService.findByPeriod() : SalesService.findAll(),
   ]);
 
-  const vendorTeamMap = new Map(vendors.map((vendor) => [vendor._id.toString(), vendor.teamId.toString()]));
+  const vendorTeamMap = new Map(
+    vendors.map((vendor) => [vendor._id.toString(), vendor.teamId.toString()]),
+  );
 
-  const teamGoalsMap = new Map(
+  const teamPointsMap = new Map(
     teams.map((team) => [
       team._id.toString(),
-      { teamId: team._id, teamName: team.name, goals: 0, teamShirt: team.imageUrl },
+      {
+        teamId: team._id,
+        teamName: team.name,
+        farm: 0,
+        sales: 0,
+        passage: 0,
+        //teamShirt: team.imageUrl,,.
+      },
     ]),
   );
 
   for (const sale of salesResult.data) {
-    const teamId = vendorTeamMap.get(sale.vendor._id.toString());
-    if (teamId && teamGoalsMap.has(teamId)) {
-      teamGoalsMap.get(teamId).goals++;
+    const teamId = vendorTeamMap.get(sale.vendorId._id.toString());
+    if (teamId && teamPointsMap.has(teamId)) {
+      teamPointsMap.get(teamId)[sale.funnelType] += pointsMap.get(
+        sale.funnelType,
+      );
     }
   }
 
-  return Array.from(teamGoalsMap.values()).sort((a, b) => b.goals - a.goals);
+  return Array.from(teamPointsMap.values())
+    .map((team) => ({ ...team, total: team.farm + team.sales + team.passage }))
+    .sort((a, b) => b.total - a.total);
 };
 
 exports.getVendorRank = async (period) => {
@@ -38,7 +53,7 @@ exports.getVendorRank = async (period) => {
   const goalsByVendor = new Map();
 
   for (const sale of salesResult.data) {
-    const vendorId = sale.vendor._id.toString();
+    const vendorId = sale.vendorId._id.toString();
     goalsByVendor.set(vendorId, (goalsByVendor.get(vendorId) || 0) + 1);
   }
 
@@ -95,12 +110,19 @@ exports.getLastWeekScoreboard = async () => {
     SalesService.findByExactWeek(),
   ]);
 
-  const vendorTeamMap = new Map(vendors.map((vendor) => [vendor._id.toString(), vendor.teamId.toString()]));
+  const vendorTeamMap = new Map(
+    vendors.map((vendor) => [vendor._id.toString(), vendor.teamId.toString()]),
+  );
 
   const teamGoalsMap = new Map(
     teams.map((team) => [
       team._id.toString(),
-      { teamId: team._id, teamName: team.name, goals: 0, teamShirt: team.imageUrl },
+      {
+        teamId: team._id,
+        teamName: team.name,
+        goals: 0,
+        teamShirt: team.imageUrl,
+      },
     ]),
   );
 
@@ -123,7 +145,7 @@ exports.getLastWeekVendorRank = async () => {
   const goalsByVendor = new Map();
 
   for (const sale of salesResult.data) {
-    const vendorId = sale.vendor._id.toString();
+    const vendorId = sale.vendorId._id.toString();
     goalsByVendor.set(vendorId, (goalsByVendor.get(vendorId) || 0) + 1);
   }
 
@@ -181,4 +203,3 @@ exports.getTeamLineup = async (teamId) => {
 
   return { vendors, sdrs };
 };
-

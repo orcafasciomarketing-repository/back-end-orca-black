@@ -9,7 +9,7 @@ exports.create = async (salesData) => {
 exports.findAll = async (page, limit) => {
   const hasPagination = page !== undefined && limit !== undefined;
   let query = Sales.find({})
-    .populate("vendor")
+    .populate("vendorId")
     .populate("sdrId")
     .sort({ createdAt: -1 });
   if (hasPagination) {

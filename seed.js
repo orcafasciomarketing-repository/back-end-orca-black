@@ -150,7 +150,6 @@ const seedSdrData = [
   },
   {
     name: "Caio Cezar",
-
     job: "CS",
     teamName: "Orçawinx",
   },
@@ -182,7 +181,7 @@ const seedSdrData = [
     teamName: "Wizards of sales",
   },
   {
-    name: "Leticia",
+    name: "Leticia Ferreira",
     job: "Suporte",
     teamName: "Sem freio",
   },
