@@ -1,4 +1,5 @@
 const { verifyAccessToken } = require("../shared/accessTokenService");
+const { UnauthorizedError } = require("../shared/errors");
 
 exports.authMiddleware = async (req, res, next) => {
   try {
@@ -14,6 +15,8 @@ exports.authMiddleware = async (req, res, next) => {
 
     next();
   } catch (err) {
+    // Token inválido ou expirado: o jsonwebtoken lança erro sem status, que viraria 500
+    if (!err.status) return next(UnauthorizedError("Token inválido ou expirado"));
     next(err);
   }
 };

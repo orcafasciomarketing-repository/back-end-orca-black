@@ -1,5 +1,14 @@
 const AnalyticsService = require("../service/analyticsService");
 
+exports.getGoal = async (req, res, next) => {
+  const data = await AnalyticsService.getGoal();
+  return res.status(200).json({
+    success: true,
+    data,
+    message: "Meta recuperada com sucesso",
+  });
+};
+
 exports.getScoreboard = async (req, res, next) => {
   const period = req.query.period === "week" ? "week" : "all";
   const data = await AnalyticsService.getScoreboard(period);
@@ -7,16 +16,6 @@ exports.getScoreboard = async (req, res, next) => {
     success: true,
     data,
     message: "Placar recuperado com sucesso",
-  });
-};
-
-exports.getTeamLineup = async (req, res, next) => {
-  const { teamId } = req.params;
-  const data = await AnalyticsService.getTeamLineup(teamId);
-  return res.status(200).json({
-    success: true,
-    data,
-    message: "Escalação recuperada com sucesso",
   });
 };
 
@@ -32,7 +31,7 @@ exports.getSdrRanking = async (req, res, next) => {
 };
 
 exports.getLastWeekScoreboard = async (req, res, next) => {
-  const data = await AnalyticsService.getLastWeekScoreboard();
+  const data = await AnalyticsService.getScoreboard("lastWeek");
   return res.status(200).json({
     success: true,
     data,
@@ -41,7 +40,8 @@ exports.getLastWeekScoreboard = async (req, res, next) => {
 };
 
 exports.getLastWeekSellerRanking = async (req, res, next) => {
-  const data = await AnalyticsService.getLastWeekVendorRank();
+  const funnelType = req.query.vendorDepartment === "farm" ? "farm" : "sales";
+  const data = await AnalyticsService.getVendorRank("lastWeek", funnelType);
   return res.status(200).json({
     success: true,
     data,
@@ -50,7 +50,7 @@ exports.getLastWeekSellerRanking = async (req, res, next) => {
 };
 
 exports.getLastWeekSdrRanking = async (req, res, next) => {
-  const data = await AnalyticsService.getLastWeekSdrRank();
+  const data = await AnalyticsService.getSdrRank("lastWeek");
   return res.status(200).json({
     success: true,
     data,
@@ -60,12 +60,11 @@ exports.getLastWeekSdrRanking = async (req, res, next) => {
 
 exports.getSellerRanking = async (req, res, next) => {
   const period = req.query.period === "week" ? "week" : "all";
-  const data = await AnalyticsService.getVendorRank(period);
+  const funnelType = req.query.vendorDepartment === "farm" ? "farm" : "sales";
+  const data = await AnalyticsService.getVendorRank(period, funnelType);
   return res.status(200).json({
     success: true,
     data,
     message: "Ranking recuperado com sucesso",
   });
 };
-
-

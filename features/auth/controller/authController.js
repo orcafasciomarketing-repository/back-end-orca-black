@@ -28,7 +28,3 @@ exports.refreshUserTokens = async (req, res) => {
   setRefreshTokenCookie(res, newRefreshToken, expiration);
   res.status(200).json({ user, token });
 };
-
-exports.callback = async (req, res, next) =>{
-  return res.status(200).json({message: JSON.stringify(req.body)})
-}

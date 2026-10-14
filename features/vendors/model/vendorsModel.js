@@ -5,6 +5,7 @@ const VendorSchema = new Schema(
     rdUserId: {
       type: String,
       required: true,
+      unique: true,
     },
     vendorName: {
       type: String,

@@ -1,16 +1,5 @@
 const SalesService = require("../service/salesService");
 
-exports.createSales = async (req, res, next) => {
-  const saleData = req.data;
-
-  const sale = await SalesService.create(saleData);
-  return res.status(201).json({
-    success: true,
-    data: sale,
-    message: "Venda criado com sucesso",
-  });
-};
-
 exports.getSales = async (req, res, next) => {
   const page = req.query.page ? Number(req.query.page) : undefined;
   const limit = req.query.limit ? Number(req.query.limit) : undefined;
@@ -32,18 +21,6 @@ exports.getSalesByPeriod = async (req, res, next) => {
     success: true,
     data: sales,
     message: "Vendas da semana recuperados com sucesso",
-  });
-};
-
-exports.updateSale = async (req, res, next) => {
-  const { salesId } = req.params;
-  const salesData = req.data;
-
-  const updatedSale = await SalesService.updateById(salesId, salesData);
-  return res.status(200).json({
-    success: true,
-    data: updatedSale,
-    message: "Venda atualizada com sucesso",
   });
 };
 

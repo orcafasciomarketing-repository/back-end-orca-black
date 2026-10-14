@@ -2,13 +2,13 @@ const { Schema, model } = require("mongoose");
 
 const saleSchema = new Schema(
   {
-    rdDealName:{
-      type: String
+    rdDealName: {
+      type: String,
     },
-    rdDealId:{
+    rdDealId: {
       type: String,
       required: true,
-      unique: true
+      unique: true,
     },
     vendorId: {
       type: Schema.Types.ObjectId,
@@ -27,25 +27,25 @@ const saleSchema = new Schema(
       type: Date,
       required: true,
     },
-    segment:{
+    segment: {
       type: String,
       required: true,
-      enum: ["b2b", "b2g"]
+      enum: ["b2b", "b2g"],
     },
-    funnelType:{
+    funnelType: {
       type: String,
       required: true,
-      enum: ["farm", "sales"]
+      enum: ["farm", "sales"],
     },
     realizedAt: {
       type: Date,
       required: true,
     },
-    dealStatus:{
+    dealStatus: {
       type: String,
       enum: ["ativa", "cancelada"],
-      required: true
-    }
+      required: true,
+    },
   },
   { timestamps: true },
 );
