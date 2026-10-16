@@ -1,6 +1,6 @@
 const SalesService = require("../service/salesService");
 
-exports.getSales = async (req, res, next) => {
+exports.getAllSales = async (req, res, next) => {
   const page = req.query.page ? Number(req.query.page) : undefined;
   const limit = req.query.limit ? Number(req.query.limit) : undefined;
 
@@ -12,11 +12,11 @@ exports.getSales = async (req, res, next) => {
   });
 };
 
-exports.getSalesByPeriod = async (req, res, next) => {
+exports.getWeekSales = async (req, res, next) => {
   const page = req.query.page ? Number(req.query.page) : undefined;
   const limit = req.query.limit ? Number(req.query.limit) : undefined;
 
-  const sales = await SalesService.findByPeriod(page, limit);
+  const sales = await SalesService.findActiveByWeek(page, limit);
   return res.status(200).json({
     success: true,
     data: sales,
@@ -24,7 +24,7 @@ exports.getSalesByPeriod = async (req, res, next) => {
   });
 };
 
-exports.findSaleByVendor = async(req, res, next) =>{
+exports.getSalesByVendor = async(req, res, next) =>{
   const {vendorId} = req.params;
 
   const vendorSales = await SalesService.findByVendor(vendorId);

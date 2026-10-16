@@ -1,7 +1,7 @@
 const { describe, it, before, after } = require("node:test");
 const assert = require("node:assert/strict");
 
-const { startTestApp, seedBase, clearDatabase, TEST_GOAL } = require("./helpers/testApp");
+const { startTestApp, seedBase, clearDatabase, TEST_GOAL, TEST_POINTS } = require("./helpers/testApp");
 
 const Sales = require("../features/sale/model/salesModel");
 
@@ -188,27 +188,27 @@ describe("Analytics", () => {
   });
 
   describe("ranking de passagens (/sdr-ranking)", () => {
-    const summarizeSdr = (data) => data.map(({ name, goals }) => ({ name, goals }));
+    const summarizeSdr = (data) => data.map(({ name, points }) => ({ name, points }));
 
     it("geral: conta passagens de SDR e de Suporte (s4 cancelada não conta)", async () => {
       const data = await getData("/sdr-ranking");
 
       assert.deepEqual(summarizeSdr(data), [
-        { name: "Suporte C", goals: 2 },
-        { name: "SDR B", goals: 1 },
+        { name: "Suporte C", points: 2 * TEST_POINTS.passage },
+        { name: "SDR B", points: 1 * TEST_POINTS.passage },
       ]);
     });
 
     it("semana", async () => {
       const data = await getData("/sdr-ranking?period=week");
 
-      assert.deepEqual(summarizeSdr(data), [{ name: "SDR B", goals: 1 }]);
+      assert.deepEqual(summarizeSdr(data), [{ name: "SDR B", points: TEST_POINTS.passage }]);
     });
 
     it("semana passada (/sdr-ranking/last-week)", async () => {
       const data = await getData("/sdr-ranking/last-week");
 
-      assert.deepEqual(summarizeSdr(data), [{ name: "Suporte C", goals: 1 }]);
+      assert.deepEqual(summarizeSdr(data), [{ name: "Suporte C", points: TEST_POINTS.passage }]);
     });
   });
 });

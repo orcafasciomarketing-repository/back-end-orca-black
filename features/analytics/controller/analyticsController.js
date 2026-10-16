@@ -1,7 +1,7 @@
 const AnalyticsService = require("../service/analyticsService");
 
-exports.getGoal = async (req, res, next) => {
-  const data = await AnalyticsService.getGoal();
+exports.getGoalProgress = async (req, res, next) => {
+  const data = await AnalyticsService.getGoalProgress();
   return res.status(200).json({
     success: true,
     data,
@@ -22,7 +22,7 @@ exports.getScoreboard = async (req, res, next) => {
 exports.getSdrRanking = async (req, res, next) => {
   const { period } = req.query;
   const validPeriod = period === "week" ? "week" : "all";
-  const data = await AnalyticsService.getSdrRank(validPeriod);
+  const data = await AnalyticsService.getSdrRanking(validPeriod);
   return res.status(200).json({
     success: true,
     data,
@@ -39,9 +39,9 @@ exports.getLastWeekScoreboard = async (req, res, next) => {
   });
 };
 
-exports.getLastWeekSellerRanking = async (req, res, next) => {
+exports.getLastWeekVendorRanking = async (req, res, next) => {
   const funnelType = req.query.vendorDepartment === "farm" ? "farm" : "sales";
-  const data = await AnalyticsService.getVendorRank("lastWeek", funnelType);
+  const data = await AnalyticsService.getVendorRanking("lastWeek", funnelType);
   return res.status(200).json({
     success: true,
     data,
@@ -50,7 +50,7 @@ exports.getLastWeekSellerRanking = async (req, res, next) => {
 };
 
 exports.getLastWeekSdrRanking = async (req, res, next) => {
-  const data = await AnalyticsService.getSdrRank("lastWeek");
+  const data = await AnalyticsService.getSdrRanking("lastWeek");
   return res.status(200).json({
     success: true,
     data,
@@ -58,10 +58,10 @@ exports.getLastWeekSdrRanking = async (req, res, next) => {
   });
 };
 
-exports.getSellerRanking = async (req, res, next) => {
+exports.getVendorRanking = async (req, res, next) => {
   const period = req.query.period === "week" ? "week" : "all";
   const funnelType = req.query.vendorDepartment === "farm" ? "farm" : "sales";
-  const data = await AnalyticsService.getVendorRank(period, funnelType);
+  const data = await AnalyticsService.getVendorRanking(period, funnelType);
   return res.status(200).json({
     success: true,
     data,

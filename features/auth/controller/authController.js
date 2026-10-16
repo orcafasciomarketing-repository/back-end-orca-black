@@ -3,6 +3,7 @@ const authService = require("../service/authService");
 function setRefreshTokenCookie(res, refreshToken, expiration) {
   res.cookie("refreshToken", refreshToken, {
     httpOnly: true,
+    
     sameSite: "lax",
     expires: new Date(expiration),
   });

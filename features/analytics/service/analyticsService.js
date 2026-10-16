@@ -7,7 +7,7 @@ const { pointsMap } = require("../../../config/points.js");
 const { BLACK_FRIDAY_GOAL } = require("../../../config/goal.js");
 
 // Meta da Black: o front só exibe, o cálculo fica aqui (fonte única da verdade)
-exports.getGoal = async () => {
+exports.getGoalProgress = async () => {
   const total = await SalesService.sumActiveValue();
 
   // Sem meta configurada, evita divisão por zero
@@ -73,7 +73,7 @@ exports.getScoreboard = async (period) => {
 };
 
 // funnelType: "sales" (Vendas) ou "farm" (Renovação)
-exports.getVendorRank = async (period, funnelType) => {
+exports.getVendorRanking = async (period, funnelType) => {
   const [vendors, sales] = await Promise.all([
     VendorsService.findAll(),
     SalesService.findActiveByPeriod(period),
@@ -107,30 +107,34 @@ exports.getVendorRank = async (period, funnelType) => {
   };
 };
 
-exports.getSdrRank = async (period) => {
+// Pontos de passagem: cada passagem vale POINTS_PER_PASSAGE
+exports.getSdrRanking = async (period) => {
   const [sdrs, sales] = await Promise.all([
     SdrService.findAll(),
     SalesService.findActiveByPeriod(period),
   ]);
 
-  const goalsBySdr = new Map();
+  const pointsBySdr = new Map();
 
   for (const sale of sales) {
     if (!sale.sdrId) continue;
     const sdrId = sale.sdrId.toString();
-    goalsBySdr.set(sdrId, (goalsBySdr.get(sdrId) || 0) + 1);
+    pointsBySdr.set(
+      sdrId,
+      (pointsBySdr.get(sdrId) || 0) + pointsMap.get("passage"),
+    );
   }
 
   return sdrs
-    .filter((sdr) => goalsBySdr.has(sdr._id.toString()))
+    .filter((sdr) => pointsBySdr.has(sdr._id.toString()))
     .map((sdr) => ({
       sdrId: sdr._id,
       name: sdr.name,
       job: sdr.job,
       teamId: sdr.teamId,
-      goals: goalsBySdr.get(sdr._id.toString()),
+      points: pointsBySdr.get(sdr._id.toString()),
       imageUrl: sdr.imageUrl,
     }))
-    .sort((a, b) => b.goals - a.goals)
+    .sort((a, b) => b.points - a.points)
     .slice(0, 3);
 };

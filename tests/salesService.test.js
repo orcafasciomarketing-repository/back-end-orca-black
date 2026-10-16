@@ -70,7 +70,7 @@ describe("SalesService.findActiveByPeriod (cálculo da semana)", () => {
   });
 });
 
-describe("SalesService.findByPeriod (rota /sales/get)", () => {
+describe("SalesService.findActiveByWeek (rota /sales/get)", () => {
   afterEach(() => {
     mock.timers.reset();
     mock.restoreAll();
@@ -80,7 +80,7 @@ describe("SalesService.findByPeriod (rota /sales/get)", () => {
     mock.timers.enable({ apis: ["Date"], now: new Date("2026-10-14T15:00:00Z") });
     const findMock = mock.method(SalesRepository, "findByPeriod", async () => ({ data: [], total: 0 }));
 
-    await SalesService.findByPeriod(1, 10);
+    await SalesService.findActiveByWeek(1, 10);
 
     const [page, limit, startDate, endDate] = findMock.mock.calls[0].arguments;
     assert.equal(page, 1);

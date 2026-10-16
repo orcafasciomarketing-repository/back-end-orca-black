@@ -245,7 +245,7 @@ Separação pelo funnelType da venda: o ranking de Vendas soma só vendas sales 
 Sem critério de desempate (empate fica na ordem que vier do banco).
 Query string: vendorDepartment=farm → farm; qualquer outro valor → sales.
 RF-04 — Ranking de SDR / passagens
-Top 3 por passagens.
+Top 3 por pontos de passagem: cada passagem vale POINTS_PER_PASSAGE. Retorno por pessoa: { sdrId, name, job, teamId, points, imageUrl } (mesmo nome de campo, points, do ranking de artilheiros).
 Inclui todos da coleção SDR (SDR + Suporte + CS).
 RF-06 — Semana passada
 Placar, artilheiros e ranking de SDR também existem para a semana passada (rotas /last-week). Usam as mesmas funções do período semanal, com a semana anterior (segunda a domingo, America/Sao_Paulo).

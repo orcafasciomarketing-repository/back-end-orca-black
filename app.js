@@ -16,9 +16,28 @@ app.use(cookieParser());
 app.use("/public", express.static("public"));
 app.use(
   cors({
-    origin: ["http://localhost:5173", "http://192.168.1.22:5173", "http://192.168.1.35:5173", "http://192.168.1.21:5173", "http://192.168.1.36","http://192.168.1.112:5173", "http://192.168.1.115:5173", "http://192.168.1.99:5173", "http://192.168.1.200:5173", "http://192.168.1.63:5173", "http://192.168.1.72:5173", "http://192.168.1.195:5173"],
+    origin: [
+      "http://localhost:5173",
+      "http://192.168.1.22:5173",
+      "http://192.168.1.35:5173",
+      "http://192.168.1.21:5173",
+      "http://192.168.1.36",
+      "http://192.168.1.112:5173",
+      "http://192.168.1.115:5173",
+      "http://192.168.1.99:5173",
+      "http://192.168.1.200:5173",
+      "http://192.168.1.63:5173",
+      "http://192.168.1.72:5173",
+      "http://192.168.1.195:5173",
+    ],
     methods: ["GET", "POST", "DELETE", "PATCH", "PUT", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "Cache-Control", "Connection"],
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+      "Cache-Control",
+      "Connection",
+    ],
+    credentials: true,
   }),
 );
 
