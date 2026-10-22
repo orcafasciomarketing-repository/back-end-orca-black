@@ -72,6 +72,23 @@ exports.findActiveByPeriod = async (period) => {
   return await SalesRepository.findActiveByRealizedAt(startOfWeek, finalOfWeek);
 };
 
+// Evento SSE de venda nova: só os campos que o popup usa (o SSE vai para todas as telas)
+const buildNewSaleEvent = (sale, vendor, sdr) => ({
+  sale: { _id: sale._id, funnelType: sale.funnelType },
+  vendor: {
+    vendorName: vendor.vendorName,
+    job: vendor.job,
+    imageUrl: vendor.imageUrl,
+  },
+  ...(sdr && {
+    sdr: { name: sdr.name, job: sdr.job, imageUrl: sdr.imageUrl },
+  }),
+});
+
+// Evento SSE de venda alterada (cancelada, reativada ou corrigida): as telas só
+// buscam os dados de novo, sem popup (o front só abre popup com sale + vendor)
+const SALE_UPDATED_EVENT = { type: "sale-updated" };
+
 exports.rdDealEventProcess = async (salesData) => {
   const saleObject = translateRdObject(
     salesData,
@@ -81,10 +98,11 @@ exports.rdDealEventProcess = async (salesData) => {
 
   // Fora das etapas Blackfriday: só cancela a venda (se existir e estiver ativa)
   if (!saleObject.isBlackFridayStage) {
-    await SalesRepository.cancelByDealId(
+    const canceledSale = await SalesRepository.cancelByDealId(
       saleObject.rdDealId,
       saleObject.rdUpdatedAt,
     );
+    if (canceledSale) broadcast(SALE_UPDATED_EVENT);
     return;
   }
 
@@ -100,19 +118,26 @@ exports.rdDealEventProcess = async (salesData) => {
   saleObject.vendorId = vendor._id;
 
   // Nome fora do cadastro de SDR: a passagem é descartada e a venda segue sem ela
+  let sdr = null;
   if (saleObject.rdPassageName) {
-    const sdr = await SdrRepository.findByName(saleObject.rdPassageName);
+    sdr = await SdrRepository.findByName(saleObject.rdPassageName);
     if (sdr) saleObject.sdrId = sdr._id;
   }
 
   // Na etapa mas não ganho: a venda (se já existir) recebe os dados e fica cancelada
   if (!saleObject.isBlackFriday) {
-    await SalesRepository.updateCanceledByDealId(saleObject);
+    const updatedSale = await SalesRepository.updateCanceledByDealId(saleObject);
+    if (updatedSale) broadcast(SALE_UPDATED_EVENT);
     return;
   }
 
   const savedObject = await SalesRepository.upsertActiveByDealId(saleObject);
+
+  // Venda nova → popup. Atualização ou reativação → só atualiza as telas.
+  // Evento antigo ignorado (sale null) → nada muda, nada é enviado.
   if (savedObject.created) {
-    // broadcast({ sale: savedObject.sale, vendor: vendor });
+    broadcast(buildNewSaleEvent(savedObject.sale, vendor, sdr));
+  } else if (savedObject.sale) {
+    broadcast(SALE_UPDATED_EVENT);
   }
 };

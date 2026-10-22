@@ -8,8 +8,13 @@ const salesRoutes = require("./features/sale/routes/salesRoutes");
 const analyticsRoutes = require("./features/analytics/routes/analyticsRoutes");
 const vendorRoutes = require("./features/vendors/routes/vendorRoutes");
 const sdrRoutes = require("./features/sdr/routes/sdrRoutes");
+const logsRoutes = require("./features/logs/routes/logsRoutes");
 
 const app = express();
+
+// No Render a requisição passa por 1 proxy: assim o req.ip é o IP de quem chamou
+// (usado pelo limite de requisições do POST /logs), e não o do proxy
+app.set("trust proxy", 1);
 
 app.use(bodyParser.json());
 app.use(cookieParser());
@@ -46,6 +51,7 @@ app.use("/sales", salesRoutes);
 app.use("/vendor", vendorRoutes);
 app.use("/sdr", sdrRoutes);
 app.use("/analytics", analyticsRoutes);
+app.use("/logs", logsRoutes);
 
 app.use((err, req, res, next) => {
   const status = err.status || 500;

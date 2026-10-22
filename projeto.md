@@ -129,10 +129,12 @@ RN-33: Existe uma única meta para a Black inteira, e ela não muda durante a ca
 RN-34: A meta mora numa variável de ambiente do backend e chega ao front pela API. O front não tem a meta no código nem numa variável própria (fonte única da verdade).
 RN-35: Progresso = soma do value das vendas ativas (campanha toda, sem filtro de período) em relação à meta. O backend calcula o percentual; o front só exibe. Percentual com 2 casas decimais, sem teto (passa de 100 se a meta for batida). Meta 0 ou não configurada → percent 0.
 4.9 Popup (SSE)
-RN-36: O broadcast SSE serve apenas para o popup de venda nova.
-RN-37: Dispara somente quando a venda é criada (created: true). Correções, cancelamentos, reativações e reenvios não disparam popup.
-RN-38: As estatísticas das telas não vêm do SSE: vêm de consultas ao backend.
-RN-39 (recomendação): enviar no broadcast só os campos que o popup usa (o SSE vai para todas as telas conectadas). 5. Fluxo do webhook (implementado)
+RN-36: O SSE (GET /sales/events) envia dois tipos de evento. Venda nova: { sale: { _id, funnelType }, vendor: { vendorName, job, imageUrl }, sdr?: { name, job, imageUrl } } → as telas atualizam e o popup aparece. Venda alterada (cancelada, reativada ou corrigida): { type: "sale-updated" } → as telas só atualizam, sem popup.
+RN-37: O evento de venda nova dispara somente quando a venda é criada (created: true). Reenvios, correções, cancelamentos e reativações nunca abrem popup.
+RN-38: Os dados das telas continuam vindo das consultas ao backend; o SSE só avisa as telas que é hora de buscar de novo. Quando nada muda no banco (evento de outro funil, deal nunca ganho, evento atrasado, vendor não cadastrado), nenhum evento é enviado.
+RN-39: O evento leva só os campos que o popup usa (o SSE vai para todas as telas conectadas): nada de valor, ids da RD ou dados internos. sdr só existe quando a venda tem passagem.
+4.10 Logs de erro do front
+RN-40: O front envia os erros das TVs para POST /logs (pública, 60 por minuto por IP) e o admin lê em GET /logs (privada, 200 mais recentes). Logs são apagados 30 dias depois de recebidos (índice TTL em createdAt). Contrato no ERROS_E_LOGS.md do front. 5. Fluxo do webhook (implementado)
 5.1 Controller
 Lê o header webhook_secret e compara com WEBHOOK_SECRET. Diferente → 401 com mensagem genérica.
 await no service.
@@ -174,7 +176,9 @@ updateCanceledByDealId(dados)
 fim (sem broadcast)
 
 { sale, created } = upsertActiveByDealId(dados)
-se created: broadcast(venda + dados do vendor para o popup)
+se created: broadcast({ sale, vendor, sdr? }) (popup)
+senão, se sale: broadcast({ type: "sale-updated" })
+(cancelByDealId e updateCanceledByDealId também enviam { type: "sale-updated" } quando alteram uma venda)
 5.4 Repository
 
 upsertActiveByDealId(sale)
@@ -261,7 +265,6 @@ Auth: /auth/register, /auth/login e /auth/refresh são públicas (decisão: cada
 Decisões em aberto (⚠️ não implementar sem confirmação)
 Valores finais dos pontos (definidos pelo comercial antes da campanha).
 Problemas conhecidos
-Service de sales: o broadcast está comentado de propósito até o front do popup ficar pronto; deve estar ativo na campanha.
 Checklist antes da campanha
 Índice único de rdDealId existe no banco (Compass → Indexes).
 Todas as variáveis da seção 3 configuradas no Render, com ids de etapa.
