@@ -1,4 +1,5 @@
 const SalesService = require("../service/salesService");
+const { isValidWebhookSecret } = require("../../../shared/webhookSecretService");
 
 exports.getAllSales = async (req, res, next) => {
   const page = req.query.page ? Number(req.query.page) : undefined;
@@ -35,15 +36,20 @@ exports.getSalesByVendor = async(req, res, next) =>{
   })
 }
 
-exports.webhookSaleEntry = async (req, res, next) =>{
-
-  const secretToken = req.headers["webhook_secret"];
-  if(secretToken !== process.env.WEBHOOK_SECRET){
-    return res.status(401).json({error: "Venda não veio do webhook da RD, portanto não entrará no banco"})
+exports.sheetSaleEntry = async (req, res, next) => {
+  // O header traz o hash bcrypt de (segredo + pepper), não o segredo
+  const isValid = await isValidWebhookSecret(req.headers["webhook_secret"]);
+  if (!isValid) {
+    return res.status(401).json({ error: "Acesso negado" });
   }
 
-  await SalesService.rdDealEventProcess(req.body);
+  // O Apps Script manda uma lista de linhas; uma linha solta também é aceita
+  const rows = Array.isArray(req.body) ? req.body : [req.body];
 
-  res.status(200).json({received: true});
-
-}
+  const results = await SalesService.sheetSalesProcess(rows);
+  return res.status(200).json({
+    success: true,
+    data: results,
+    message: "Linhas da planilha processadas",
+  });
+};

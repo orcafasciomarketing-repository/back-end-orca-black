@@ -4,7 +4,7 @@ exports.findAll = async (page, limit) => {
   const hasPagination = page !== undefined && limit !== undefined;
   let query = Sales.find({})
     .populate("vendorId")
-    .populate("sdrId")
+    .populate("sdrIds")
     .sort({ createdAt: -1 });
   if (hasPagination) {
     query = query.skip((page - 1) * limit).limit(limit);
@@ -21,7 +21,7 @@ exports.findByPeriod = async (page, limit, startDate, endDate) => {
     realizedAt: { $gte: startDate, $lte: endDate },
   };
   const hasPagination = page !== undefined && limit !== undefined;
-  let query = Sales.find(filter).populate("vendorId").populate("sdrId");
+  let query = Sales.find(filter).populate("vendorId").populate("sdrIds");
   if (hasPagination) {
     query = query.skip((page - 1) * limit).limit(limit);
   }
@@ -49,14 +49,14 @@ exports.findActiveByRealizedAt = async (startDate, endDate) => {
 
 exports.findByVendor = async (vendorId) => {
   const filter = { vendorId };
-  const query = Sales.find(filter).populate("vendorId").populate("sdrId");
+  const query = Sales.find(filter).populate("vendorId").populate("sdrIds");
   return {
     data: await query,
     total: await Sales.countDocuments(filter),
   };
 };
 
-// Dados da RD gravados na venda, com o status decidido pelo service
+// Dados da planilha gravados na venda, com o status decidido pelo service
 const buildSaleUpdate = (sale, dealStatus) => {
   const update = {
     $set: {
@@ -66,28 +66,23 @@ const buildSaleUpdate = (sale, dealStatus) => {
       segment: sale.segment,
       funnelType: sale.funnelType,
       rdUpdatedAt: sale.rdUpdatedAt,
+      // Data digitada na planilha: corrigir a data também atualiza a venda (e a semana dela)
+      realizedAt: sale.realizedAt,
       dealStatus,
+      // Sempre grava a lista inteira: lista vazia limpa as passagens tiradas da planilha
+      sdrIds: sale.sdrIds ?? [],
     },
   };
-
-  if (sale.sdrId) {
-    update.$set.sdrId = sale.sdrId;
-  } else {
-    // Sem passagem: remove o campo (cobre a passagem tirada do deal na RD)
-    update.$unset = { sdrId: "" };
-  }
 
   return update;
 };
 
 exports.upsertActiveByDealId = async (sale) => {
   const update = buildSaleUpdate(sale, "ativa");
-  update.$setOnInsert = { realizedAt: sale.rdUpdatedAt };
 
   try {
-    // $lte: a RD não muda o updated_at quando só um custom field é editado,
-    // então um evento com o mesmo updated_at também precisa ser aplicado.
-    // Só um evento mais antigo é ignorado (cai no E11000 abaixo).
+    // $lte: um envio com o mesmo "Atualizado em" (ex.: linhas do mesmo lote) também é aplicado.
+    // Só um envio mais antigo que o salvo é ignorado (cai no E11000 abaixo).
     const saleInfo = await Sales.findOneAndUpdate(
       { rdDealId: sale.rdDealId, rdUpdatedAt: { $lte: sale.rdUpdatedAt } },
       update,
@@ -109,8 +104,8 @@ exports.upsertActiveByDealId = async (sale) => {
   }
 };
 
-// Deal na etapa Blackfriday mas não ganho: atualiza os dados e deixa cancelada.
-// Sem upsert: só mexe em venda que já existe (deal que nunca foi ganho não vira venda).
+// Linha cancelada com os dados completos: atualiza os dados e deixa cancelada.
+// Sem upsert: só mexe em venda que já existe (linha que nunca foi concluída não vira venda).
 exports.updateCanceledByDealId = async (sale) => {
   return await Sales.findOneAndUpdate(
     { rdDealId: sale.rdDealId, rdUpdatedAt: { $lte: sale.rdUpdatedAt } },

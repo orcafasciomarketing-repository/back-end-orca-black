@@ -9,7 +9,7 @@ router.get("/admin", authMiddleware, SalesController.getAllSales);
 router.get("/get", SalesController.getWeekSales);
 router.get("/get/:vendorId", authMiddleware, SalesController.getSalesByVendor);
 router.get("/events", SseController.getClient);
-router.post("/webhook/deal", SalesController.webhookSaleEntry)
+router.post("/webhook/sheet", SalesController.sheetSaleEntry);
 
 
 module.exports = router;

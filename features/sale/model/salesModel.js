@@ -19,10 +19,13 @@ const saleSchema = new Schema(
       type: Number,
       required: true,
     },
-    sdrId: {
-      type: Schema.Types.ObjectId,
-      ref: "SDR",
-    },
+    // Pessoas que fizeram passagem nesta venda (pode ser mais de uma). Lista vazia = sem passagem
+    sdrIds: [
+      {
+        type: Schema.Types.ObjectId,
+        ref: "SDR",
+      },
+    ],
     rdUpdatedAt: {
       type: Date,
       required: true,

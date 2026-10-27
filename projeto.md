@@ -5,7 +5,8 @@ Instrução para quem for alterar o código (humano ou IA): Este documento descr
 1. Contexto
    Dashboard interno exibido em telas (slides) durante o plantão da Black Friday.
    Vida útil: cerca de 1 mês. Depois da campanha, o sistema é desligado. Não construir funcionalidades pensando em longo prazo (YAGNI).
-   As vendas chegam via webhook do RD Station CRM.
+   As vendas são anotadas pelo comercial numa planilha Google Sheets. Um Apps Script na planilha envia as linhas para o backend (POST /sales/webhook/sheet).
+   Mudança em 27/10/2026: o comercial deixou de usar o RD Station CRM. O webhook da RD, o STAGE_MAP e o custom field de passagem foram removidos (estão no histórico do git, branch main).
    As telas ficam ligadas o tempo todo consultando o backend (isso mantém o serviço ativo no Render).
    Ninguém muda de time durante a campanha.
    Stack
@@ -14,111 +15,104 @@ Instrução para quem for alterar o código (humano ou IA): Este documento descr
    Banco MongoDB com Mongoose
    Tempo real SSE (shared/sseManager, função broadcast)
    Hospedagem Render (roda em UTC)
-   Origem dos dados RD Station CRM (webhook)
+   Origem dos dados Planilha Google Sheets + Apps Script
    Arquitetura em camadas
    Camada Responsabilidade
-   Controller Apenas HTTP: valida o secret, chama o service, devolve o status.
-   Adapter Única parte que conhece o formato do payload da RD. Função pura: traduz o payload para o objeto do sistema.
-   Service Regras de negócio: decide o ramo, busca vendor e passagem, decide o broadcast.
+   Controller Apenas HTTP: valida o secret, chama o service, devolve o resultado de cada linha.
+   Adapter Única parte que conhece as colunas da planilha (sheetRowAdapter). Função pura: traduz a linha para o objeto do sistema.
+   Service Regras de negócio: decide ativa/cancelada, busca vendor e passagem pelo nome, decide o broadcast.
    Repository Única parte que fala com o Mongoose. Traduz detalhes do Mongo (ex.: erro E11000) para resultados neutros.
-   Config Leitura de variáveis de ambiente e mapas de configuração.
+   Config Leitura de variáveis de ambiente.
 2. Entidades
    2.1 Sale (model "Sales")
+   Os nomes com prefixo rd foram mantidos (o front do admin lê rdDealName, rdDealId, realizedAt e dealStatus). Hoje os dados vêm da planilha.
    Campo Tipo Regras
-   rdDealId String Obrigatório, único (índice único). Id do deal na RD. Chave da idempotência.
-   rdDealName String Opcional. Nome do deal (texto livre, pode repetir).
-   vendorId ObjectId → "Vendors" Obrigatório. \_id do vendor no banco do sistema (não é o id da RD).
-   value Number Obrigatório. Valor da venda.
-   sdrId ObjectId → "SDR" Opcional. Pessoa que fez a passagem (pode ser SDR, Suporte ou CS).
-   rdUpdatedAt Date Obrigatório. updated_at do deal (nível document). Usado para ordenar eventos.
-   segment String enum ["b2b", "b2g"] Obrigatório. Hoje não é usado em nenhuma tela, mas é mantido.
-   funnelType String enum ["farm", "sales"] Obrigatório. sales = Vendas, farm = Renovação.
-   realizedAt Date Obrigatório. Data da primeira entrada na etapa Blackfriday. Nunca muda depois. Base dos filtros de período.
-   dealStatus String enum ["ativa", "cancelada"] Obrigatório. Status do sistema (não é o status da RD).
-   createdAt / updatedAt Date Gerados pelo Mongoose (timestamps: true). Indicam alterações no banco, não na RD.
-
-Convenção: prefixo rd = dado que vem da RD. Campos sem prefixo são do sistema.
+   rdDealId String Obrigatório, único (índice único). Coluna "Id da venda" (UUID gerado pelo Apps Script). Chave da idempotência.
+   rdDealName String Opcional. Coluna "Id da empresa" (mostrado como "Negociação" no admin).
+   vendorId ObjectId → "Vendors" Obrigatório. \_id do vendor encontrado pelo nome (coluna "Vendedor").
+   value Number Obrigatório. Coluna "Valor da venda".
+   sdrIds [ObjectId] → "SDR" Lista (padrão vazia). Pessoas da coluna "Passagens" (SDR, Suporte ou CS). Lista vazia = sem passagem.
+   rdUpdatedAt Date Obrigatório. Coluna "Atualizado em" (momento do envio, colocado pelo Apps Script). Usado para ordenar os envios.
+   segment String enum ["b2b", "b2g"] Obrigatório. Coluna "Setor". Hoje não é usado em nenhuma tela, mas é mantido.
+   funnelType String enum ["farm", "sales"] Obrigatório. Coluna "Classificação": "Renovação" = farm; vazia (venda nova) = sales.
+   realizedAt Date Obrigatório. Coluna "Data da venda". Pode ser corrigida na planilha. Base dos filtros de período.
+   dealStatus String enum ["ativa", "cancelada"] Obrigatório. Coluna "Status": "Concluída" = ativa; "Cancelada" (ou qualquer outro) = cancelada.
+   createdAt / updatedAt Date Gerados pelo Mongoose (timestamps: true). Indicam alterações no banco.
 
 2.2 Vendor (model "Vendors")
 Vendedor. Pertence a um team (teamId).
-Possui o id do usuário na RD com índice único (nome do campo: conferir no código). É o que liga document.user.id do payload ao vendor.
+Encontrado pelo vendorName, que é único (índice único sparse) e precisa ser igual ao texto da coluna "Vendedor" da planilha.
+rdUserId continua no model (obrigatório e único) por causa do seed, mas não é mais usado.
 Possui job (informativo; o ranking de artilheiros separa pelo funnelType da venda, não pelo job).
-Cadastrados via seed, com os ids reais da RD.
+Cadastrados via seed.
 2.3 SDR (model "SDR")
 Coleção única para SDR, Suporte e CS, diferenciados pelo campo job.
 Essas pessoas só pontuam por passagens.
 Pertencem a um team (teamId).
-Não possuem id da RD (nem todos têm usuário no RD CRM). São encontrados pelo name, que é único (índice único) e igual às opções do select de passagem na RD.
+São encontrados pelo name, que é único (índice único) e igual ao texto usado na coluna "Passagens".
 Cadastrados via seed.
 2.4 Team
 Time. Possui name e imageUrl (escudo exibido no card).
 Vendors e SDRs apontam para o team. A venda não guarda o team: ele é obtido pelo vendor (ou pela pessoa da passagem).
 2.5 O que NÃO é entidade
-Deal da RD: conceito externo. Entra pelo adapter e vira uma Sale.
-Mapa de etapas e mapa de pontos: configuração.
+Linha da planilha: conceito externo. Entra pelo adapter e vira uma Sale.
+Mapa de pontos: configuração.
 Meta: configuração (variável de ambiente), pois é única e não muda. 3. Configuração (variáveis de ambiente)
 
 Devem existir no .env local e nas variáveis de ambiente do Render.
 
 Variável Uso
-WEBHOOK_SECRET Valor esperado no header webhook_secret do webhook. Nunca logar.
-B2B_FUNIL_BLACKFRIDAY_SALES Id da etapa Blackfriday do funil B2B Vendas.
-B2B_FUNIL_BLACKFRIDAY_FARM Id da etapa Blackfriday do funil B2B Farmer.
-B2G_FUNIL_BLACKFRIDAY_SALES Id da etapa Blackfriday do funil B2G Vendas.
-B2G_FUNIL_BLACKFRIDAY_FARM Id da etapa Blackfriday do funil B2G Farmer.
-POINTS_PER_SALE Pontos por venda do tipo sales.
-POINTS_PER_FARM Pontos por venda do tipo farm.
-POINTS_PER_PASSAGE Pontos por passagem.
-RD_PASSAGE_CUSTOM_FIELD_ID Id do custom field (select) da passagem (custom_field.id dentro de document.deal_custom_fields).
+WEBHOOK_SECRET Segredo do envio da planilha. Nunca logar. Sem ela, o backend recusa todos os envios.
+WEBHOOK_CRYPTO_PEPPER Pepper somado ao segredo antes do hash. Nunca logar. Sem ela, o backend recusa todos os envios.
+O Apps Script não manda o segredo: manda o hash bcrypt de (WEBHOOK_SECRET + WEBHOOK_CRYPTO_PEPPER), gerado com `node crypto.js` e guardado nas Propriedades do script. Se só o segredo vazar, ainda falta o pepper para gerar um hash aceito. Trocar o segredo ou o pepper exige gerar o hash de novo e atualizar a planilha.
+POINTS_PER_SALE Pontos por venda do tipo sales (definido: 2).
+POINTS_PER_FARM Pontos por venda do tipo farm (definido: 1).
+POINTS_PER_PASSAGE Pontos por pessoa da passagem (definido: 1).
 BLACK_FRIDAY_GOAL Meta da Black (valor em reais). Lida em config/goal.js com Number(process.env.BLACK_FRIDAY_GOAL ?? 0).
 
-Importante: as quatro variáveis de etapa guardam ids de etapa (document.deal_stage.id), não de funil (document.deal_pipeline.id).
+As variáveis da RD (B2B_FUNIL_*, B2G_FUNIL_*, RD_PASSAGE_CUSTOM_FIELD_ID) não são mais usadas e podem ser apagadas.
 
-3.1 config/rdStages.js
-Exporta { STAGE_MAP }.
-STAGE_MAP é um objeto: chave = id da etapa (valor da variável), valor = { segment, funnelType }.
-Variável de etapa vazia ou ausente fica fora do mapa (evita chave "undefined"/"" que faria um deal sem etapa virar Blackfriday) e gera um console.warn na inicialização com o nome das variáveis faltando.
-config/rdCustomFields.js exporta { PASSAGE_CUSTOM_FIELD_ID }.
-3.2 config/points.js
+3.1 config/points.js
 Exporta { pointsMap }.
 pointsMap é um Map com as chaves "sales", "farm" e "passage".
 Valores convertidos com Number(process.env.X ?? 0). Padrão 0 se a variável não existir.
-Os valores finais só são definidos pelo comercial pouco antes da campanha. O sistema deve funcionar com qualquer valor configurado. Não fixar valores no código. 4. Regras de negócio
+O sistema deve funcionar com qualquer valor configurado. Não fixar valores no código. 4. Regras de negócio
 4.1 O que é uma venda
-RN-01: Só é venda Blackfriday o deal cuja etapa atual (document.deal_stage.id) está no STAGE_MAP (uma das quatro etapas Blackfriday) E cujo status na RD (document.status) é "won". As duas condições juntas.
-RN-02: O comercial sempre marca o deal como ganho na RD (acordado com o comercial). Um deal na etapa Blackfriday sem status "won" (ex.: arrastado por engano) não é venda e não gera popup.
-RN-03: A RD envia eventos de todos os funis e etapas. Eventos de etapas fora do mapa não criam vendas.
+RN-01: Cada linha da planilha com Status "Concluída" é uma venda ativa. A comparação ignora acento, maiúscula e espaço.
+RN-02: Status "Cancelada" (ou qualquer valor diferente de "Concluída") deixa a venda cancelada, se ela existir. Linha que nunca foi concluída não vira venda.
+RN-03: O Apps Script só envia linhas concluídas ou que já foram concluídas antes (que têm "Id da venda"). Linhas nunca concluídas não chegam ao backend.
 4.2 Ciclo de vida da venda
-RN-04 (criação): deal fica numa etapa Blackfriday com status won pela primeira vez → venda criada com status ativa.
-RN-05 (correção): deal continua na etapa e algum dado muda (ex.: valor) → venda atualizada.
-RN-06 (cancelamento): deal sai da etapa Blackfriday para qualquer outra etapa, ou deixa de estar won (perdido, reaberto, pausado) → venda marcada como cancelada. Nunca apagar (soft delete).
-RN-06b (edição de venda cancelada): enquanto o deal estiver numa etapa Blackfriday, qualquer edição (valor, nome, dono, passagem, troca de funil) é refletida na venda, mesmo cancelada; o status continua definido pelo won. O admin tem um dash com essas informações. Fora da etapa, a venda só é cancelada (os dados não mudam). Deal que nunca foi ganho não vira venda (nada é criado), para o realizedAt continuar sendo a data em que foi ganho.
-RN-07 (reativação): deal cancelado volta a estar numa etapa Blackfriday com status won → venda volta a ativa.
-RN-08 (troca de funil): deal vai da etapa Blackfriday de um funil para a de outro → segment e funnelType são atualizados.
-RN-09 (data da venda): realizedAt é a data do primeiro evento em que o deal estava na etapa e won. Correções e reativações não alteram essa data.
-RN-10: Vendas cancelada não contam em nenhuma tela.
-4.3 Idempotência e ordem dos eventos
-RN-11: A RD entrega eventos pelo menos uma vez e reenvia em caso de timeout ou resposta não-2xx. O mesmo evento pode chegar várias vezes, inclusive ao mesmo tempo.
-RN-12: Reenvios não podem duplicar vendas nem gerar popups repetidos. Garantia: índice único em rdDealId.
-RN-13: Qualquer alteração na negociação precisa refletir no banco. A RD NÃO muda o updated_at quando só um custom field é editado (ex.: passagem), então um evento é aplicado quando o seu updated_at é mais novo OU IGUAL ($lte) ao rdUpdatedAt salvo. Só eventos estritamente mais antigos (fora de ordem) são ignorados. Limitação aceita: duas edições com o mesmo updated_at que cheguem fora de ordem ficam com a que chegou por último.
-RN-14: A ordenação usa document.updated_at (nível do deal, com milissegundos). Não usar deal_stage.updated_at (é a data de edição da etapa no funil, igual para todos os deals). Não usar event_timestamp (só tem precisão de segundos).
+RN-04 (criação): primeira vez que a linha chega como "Concluída" → venda criada como ativa (popup).
+RN-05 (correção): qualquer coluna editada (valor, data, vendedor, passagens, setor, classificação) → venda atualizada, esteja ela ativa ou cancelada.
+RN-06 (cancelamento): Status diferente de "Concluída" → venda marcada como cancelada. Nunca apagar (soft delete). Com os dados completos, a venda também recebe os dados novos; com dados faltando, só o status muda.
+RN-06b: Nunca apagar a linha na planilha para cancelar (o Apps Script não avisa quando uma linha é apagada). Para cancelar, mude o Status.
+RN-07 (reativação): linha volta para "Concluída" → venda volta a ativa (sem popup).
+RN-08 (troca de setor/classificação): segment e funnelType são atualizados.
+RN-09 (data da venda): realizedAt é a coluna "Data da venda". Corrigir a data na planilha atualiza a venda (e a semana em que ela conta).
+RN-10: Vendas canceladas não contam em nenhuma tela.
+RN-10b (validação): linha concluída sem "Id da venda", "Atualizado em", vendedor cadastrado, Setor B2B/B2G, valor numérico ≥ 0 ou data válida não é gravada. A resposta diz o problema de cada linha (aparece no log do Apps Script). Uma linha com erro não impede as outras do mesmo envio.
+4.3 Idempotência e ordem dos envios
+RN-11: O Apps Script envia a cada edição (acionador "Ao editar") e reenvia a planilha inteira a cada 10 minutos (sincronização). A mesma linha chega muitas vezes, inclusive ao mesmo tempo.
+RN-12: Reenvios não podem duplicar vendas nem gerar popups repetidos. Garantia: índice único em rdDealId ("Id da venda").
+RN-13: Um envio é aplicado quando o seu "Atualizado em" é mais novo OU IGUAL ($lte) ao rdUpdatedAt salvo. Só envios estritamente mais antigos (fora de ordem) são ignorados.
+RN-14: "Id da venda" é um UUID gerado pelo Apps Script na primeira vez que a linha fica "Concluída". Nunca usar o número da linha (muda ao ordenar, inserir ou apagar linhas). Linha copiada e colada recebe um id novo.
 RN-15: Datas sempre salvas como Date, nunca como string.
 4.4 Vendedor
-RN-16: O vendedor da venda é o dono do deal na RD (document.user.id), encontrado no banco pelo id da RD.
-RN-17: Se o vendor não for encontrado, a venda não é salva e um console.warn registra o rdUserId e o rdDealId.
+RN-16: O vendedor é encontrado pelo nome (coluna "Vendedor" = vendorName, comparação exata).
+RN-17: Vendedor não cadastrado → linha concluída não é gravada; a resposta traz o erro "Vendedor "<nome>" não cadastrado".
 4.5 Passagem
-RN-18: Uma venda pode ter zero ou uma passagem. O campo é opcional.
-RN-19: A passagem vem num custom field do tipo select (type "option") em document.deal_custom_fields: { value: "Nome da pessoa", custom_field: { id, label, opts, type } }. O campo é encontrado pelo custom_field.id (RD_PASSAGE_CUSTOM_FIELD_ID), nunca pela posição na lista nem pelo label. Campo vazio vem com value null; o campo também pode nem vir na lista.
-RN-20: A passagem só existe junto com a venda. Ela fica dentro do documento da Sale (sdrId), não em coleção separada. Se a venda for cancelada, a passagem deixa de contar.
-RN-21: A pessoa da passagem é buscada na coleção SDR pelo name (comparação exata com o valor do select). Se o nome não estiver cadastrado, a passagem é descartada (sem log) e a venda é salva sem sdrId.
-RN-22: sem passagem, a venda não tem a propriedade sdrId ($unset). Se a passagem for removida do deal na RD, o próximo evento remove o sdrId; se for trocada, o sdrId é atualizado.
+RN-18: Uma venda pode ter zero, uma ou várias pessoas na passagem. Cada pessoa conta uma vez por venda (nome repetido é ignorado).
+RN-19: Coluna "Passagens": nomes separados por vírgula ("Ana, Caio"), formato da lista suspensa com várias seleções do Sheets. Uma lista JSON também é aceita. Vazio = sem passagem.
+RN-20: A passagem só existe junto com a venda. Ela fica dentro do documento da Sale (sdrIds), não em coleção separada. Se a venda for cancelada, a passagem deixa de contar.
+RN-21: As pessoas da passagem são buscadas na coleção SDR pelo name (comparação exata). Nome não cadastrado é descartado (sem log) e a venda segue com os nomes que existem. A ordem da lista é a mesma da planilha.
+RN-22: Todo envio grava a lista inteira em sdrIds ($set). Pessoa tirada da coluna sai da venda; lista vazia = sem passagem.
 4.6 Pontuação
 RN-23: Venda sales vale POINTS_PER_SALE pontos.
 RN-24: Venda farm (Renovação) vale POINTS_PER_FARM pontos.
-RN-25: Cada passagem vale POINTS_PER_PASSAGE pontos.
+RN-25: Cada pessoa da passagem vale POINTS_PER_PASSAGE pontos (venda com 2 pessoas = 2 × POINTS_PER_PASSAGE).
 RN-26: Pontos não são gravados na venda. São calculados na leitura, a partir do pointsMap. Assim, se os valores mudarem, valem para todas as vendas imediatamente.
 RN-27: Pontos de venda/renovação vão para o time do vendedor.
-RN-28: Pontos de passagem vão para o time de quem fez a passagem (pode ser diferente do time do vendedor).
+RN-28: Os pontos de cada pessoa da passagem vão para o time dela (pode ser diferente do time do vendedor). Duas pessoas do mesmo time na mesma venda = o time ganha os pontos das duas.
 4.7 Períodos
 RN-29 (semanal): semana de segunda a domingo, no fuso America/Sao_Paulo (o servidor roda em UTC). O ranking "zera" na segunda apenas por filtro de data; nenhum dado é apagado.
 RN-30 (geral): todas as vendas ativas da campanha, sem filtro de data.
@@ -129,96 +123,90 @@ RN-33: Existe uma única meta para a Black inteira, e ela não muda durante a ca
 RN-34: A meta mora numa variável de ambiente do backend e chega ao front pela API. O front não tem a meta no código nem numa variável própria (fonte única da verdade).
 RN-35: Progresso = soma do value das vendas ativas (campanha toda, sem filtro de período) em relação à meta. O backend calcula o percentual; o front só exibe. Percentual com 2 casas decimais, sem teto (passa de 100 se a meta for batida). Meta 0 ou não configurada → percent 0.
 4.9 Popup (SSE)
-RN-36: O SSE (GET /sales/events) envia dois tipos de evento. Venda nova: { sale: { _id, funnelType }, vendor: { vendorName, job, imageUrl }, sdr?: { name, job, imageUrl } } → as telas atualizam e o popup aparece. Venda alterada (cancelada, reativada ou corrigida): { type: "sale-updated" } → as telas só atualizam, sem popup.
-RN-37: O evento de venda nova dispara somente quando a venda é criada (created: true). Reenvios, correções, cancelamentos e reativações nunca abrem popup.
-RN-38: Os dados das telas continuam vindo das consultas ao backend; o SSE só avisa as telas que é hora de buscar de novo. Quando nada muda no banco (evento de outro funil, deal nunca ganho, evento atrasado, vendor não cadastrado), nenhum evento é enviado.
-RN-39: O evento leva só os campos que o popup usa (o SSE vai para todas as telas conectadas): nada de valor, ids da RD ou dados internos. sdr só existe quando a venda tem passagem.
+RN-36: O SSE (GET /sales/events) envia dois tipos de evento. Venda nova: { sale: { _id, funnelType }, vendor: { vendorName, job, imageUrl }, sdrs?: [{ name, job, imageUrl }], sdr?: { name, job, imageUrl } } → as telas atualizam e o popup aparece. sdrs é a lista de todas as pessoas da passagem; sdr é a primeira da lista, mantido para o popup atual do front (que só mostra uma pessoa) e que deve sair quando o front mostrar a lista. Venda alterada (cancelada, reativada ou corrigida): { type: "sale-updated" } → as telas só atualizam, sem popup.
+RN-37: O evento de venda nova dispara somente quando a venda é criada (created: true). Reenvios (sincronização), correções, cancelamentos e reativações nunca abrem popup.
+RN-38: Os dados das telas continuam vindo das consultas ao backend; o SSE só avisa as telas que é hora de buscar de novo. Quando nada muda no banco (linha cancelada que nunca foi concluída, linha com erro, envio atrasado), nenhum evento é enviado. Num lote com várias alterações, vai um único { type: "sale-updated" } (a sincronização reenvia a planilha inteira e as TVs não precisam buscar os dados N vezes); cada venda nova gera o seu evento de popup.
+RN-39: O evento leva só os campos que o popup usa (o SSE vai para todas as telas conectadas): nada de valor, empresa, id da venda ou dados internos. sdrs e sdr só existem quando a venda tem passagem.
 4.10 Logs de erro do front
-RN-40: O front envia os erros das TVs para POST /logs (pública, 60 por minuto por IP) e o admin lê em GET /logs (privada, 200 mais recentes). Logs são apagados 30 dias depois de recebidos (índice TTL em createdAt). Contrato no ERROS_E_LOGS.md do front. 5. Fluxo do webhook (implementado)
-5.1 Controller
-Lê o header webhook_secret e compara com WEBHOOK_SECRET. Diferente → 401 com mensagem genérica.
-await no service.
-Responde 200, inclusive para eventos ignorados. A RD não lê o corpo da resposta.
-Erros sobem para o middleware de erros (Express 5) → resposta não-2xx → a RD reenvia (seguro por causa da idempotência).
-5.2 Adapter (translateRdObject(rawObject, stageMap))
+RN-40: O front envia os erros das TVs para POST /logs (pública, 60 por minuto por IP) e o admin lê em GET /logs (privada, 200 mais recentes). Logs são apagados 30 dias depois de recebidos (índice TTL em createdAt). Contrato no ERROS_E_LOGS.md do front. 5. Fluxo da planilha (implementado)
+5.1 Apps Script (na planilha)
+Acionador "Ao editar" (aoEditarPlanilha): envia as linhas editadas que estão "Concluída" ou que já têm "Id da venda". Gera o "Id da venda" (UUID) na primeira vez e grava na planilha.
+Acionador de tempo a cada 10 min (sincronizarTudo): reenvia a planilha inteira (rede de segurança se o backend estava fora do ar).
+Envia em lotes de 50 linhas, como lista JSON, com "Atualizado em" (momento do envio) e o header webhook_secret com o hash (Propriedades do script).
+5.2 Controller (sheetSaleEntry)
+Header webhook_secret conferido com bcrypt.compare(WEBHOOK_SECRET + WEBHOOK_CRYPTO_PEPPER, header) (shared/webhookSecretService.js). Valor que não tem formato de hash bcrypt é recusado sem rodar o bcrypt. O último hash aceito fica em memória para as próximas requisições não pagarem os ~250 ms do bcrypt. Segredo ou pepper ausentes no servidor, ou hash que não bate → 401 "Acesso negado".
+Aceita uma lista de linhas ou uma linha solta.
+Responde 200 com o resultado de cada linha: { linha, idVenda, status: "criada" | "atualizada" | "cancelada" | "ignorada" | "erro", mensagem? }.
+Erros inesperados sobem para o middleware de erros (Express 5) → não-2xx → o Apps Script registra no log; a sincronização reenvia.
+5.3 Adapter (translateSheetRow(row), findSaleDataErrors(sale))
+Função pura.
 
-Função pura. Recebe o payload e o mapa de etapas como parâmetro. Devolve sempre o mesmo formato:
+Campo de saída Origem na linha
+rdDealId "Id da venda"
+rdDealName "Id da empresa"
+rdUpdatedAt "Atualizado em" (null se inválido)
+realizedAt "Data da venda" (null se inválida)
+value "Valor da venda" (NaN se vazio ou não numérico)
+vendorName "Vendedor"
+rdPassageNames "Passagens" separadas por vírgula, sem vazios e sem repetidos
+segment "Setor": B2B → b2b, B2G → b2g, outro → null
+funnelType "Classificação": Renovação → farm, outro/vazio → sales
+isConcluded "Status" = Concluída
+sheetRow "linha" (só para o log)
 
-Campo de saída Origem no payload
-rdDealId document.id
-rdDealName document.name
-value document.amount_total (confirmado: é o valor da venda)
-rdUpdatedAt new Date(document.updated_at)
-rdUserId document.user.id
-isBlackFridayStage true se document.deal_stage.id está no mapa (qualquer status)
-isBlackFriday true se document.deal_stage.id está no mapa E document.status === "won"
-rdPassageName value do custom field de id RD_PASSAGE_CUSTOM_FIELD_ID (null se vazio ou ausente)
-segment, funnelType espalhados a partir do mapa (ausentes quando não é Blackfriday)
-5.3 Service (rdDealEventProcess)
-dados = adapter(payload, STAGE_MAP)
+findSaleDataErrors devolve a lista de problemas: vendedor vazio, setor inválido, valor inválido, data inválida.
+5.4 Service (sheetSalesProcess(rows))
+Para cada linha, uma por vez:
 
-se não está numa etapa Blackfriday (isBlackFridayStage false):
-cancelByDealId(rdDealId, rdUpdatedAt)
-fim (sem broadcast)
+dados = adapter(linha)
+sem rdDealId ou rdUpdatedAt → erro
+problemas = findSaleDataErrors(dados) + vendedor não cadastrado
 
-vendor = buscar vendor pelo id da RD
-se não existe:
-console.warn com rdUserId e rdDealId
-fim
+se não é Concluída:
+  sem problemas → updateCanceledByDealId(dados com vendorId e sdrIds) (cancela e atualiza os dados)
+  com problemas → cancelByDealId(rdDealId, rdUpdatedAt) (só cancela)
+  fim da linha
 
-dados.vendorId = vendor.\_id
-se dados.rdPassageName:
-sdr = buscar SDR pelo name
-se existe: dados.sdrId = sdr._id (senão a passagem é descartada)
-
-se não é won (isBlackFriday false):
-updateCanceledByDealId(dados)
-fim (sem broadcast)
-
+se tem problemas → erro (nada gravado)
+dados.vendorId = vendor._id
+dados.sdrIds = SDRs encontrados pelos nomes, na ordem da planilha
 { sale, created } = upsertActiveByDealId(dados)
-se created: broadcast({ sale, vendor, sdr? }) (popup)
-senão, se sale: broadcast({ type: "sale-updated" })
-(cancelByDealId e updateCanceledByDealId também enviam { type: "sale-updated" } quando alteram uma venda)
-5.4 Repository
+
+Depois do lote: broadcast({ sale, vendor, sdrs?, sdr? }) para cada venda criada; um único broadcast({ type: "sale-updated" }) se alguma venda foi alterada.
+5.5 Repository
 
 upsertActiveByDealId(sale)
 
-Filtro: rdDealId igual e rdUpdatedAt $lte o do evento.
-$set: rdDealName, value, vendorId, segment, funnelType, rdUpdatedAt, dealStatus: "ativa" e sdrId (quando há passagem).
-$unset: sdrId (quando não há passagem).
-$setOnInsert: realizedAt = rdUpdatedAt do evento.
-Opções: upsert: true, new: true, runValidators: true, includeResultMetadata: true.
+Filtro: rdDealId igual e rdUpdatedAt $lte o do envio.
+$set: rdDealName, value, vendorId, segment, funnelType, rdUpdatedAt, realizedAt, dealStatus: "ativa" e sdrIds (lista inteira).
+Opções: upsert: true, returnDocument: "after", runValidators: true, includeResultMetadata: true.
 Retorno: { sale: result.value, created: !result.lastErrorObject.updatedExisting }.
-Erro 11000 (evento mais antigo que o salvo: o filtro não acha a venda e o upsert tenta criar outra com o mesmo rdDealId) → retorna { sale: null, created: false }. Qualquer outro erro é relançado.
+Erro 11000 (envio mais antigo que o salvo: o filtro não acha a venda e o upsert tenta criar outra com o mesmo rdDealId) → retorna { sale: null, created: false }. Qualquer outro erro é relançado.
 
 updateCanceledByDealId(sale)
 
-Deal na etapa mas não won. Sem upsert (nunca cria documento).
-Filtro: rdDealId igual e rdUpdatedAt $lte o do evento (qualquer dealStatus).
-$set/$unset: os mesmos dados do upsertActiveByDealId, com dealStatus: "cancelada".
+Linha cancelada com os dados completos. Sem upsert (nunca cria documento).
+Filtro: rdDealId igual e rdUpdatedAt $lte o do envio (qualquer dealStatus).
+$set: os mesmos dados do upsertActiveByDealId, com dealStatus: "cancelada".
 
 cancelByDealId(rdDealId, rdUpdatedAt)
 
-Deal fora da etapa. Sem upsert (nunca cria documento).
-Filtro: rdDealId igual, rdUpdatedAt $lte o do evento, dealStatus: "ativa".
+Linha cancelada com dados faltando. Sem upsert (nunca cria documento).
+Filtro: rdDealId igual, rdUpdatedAt $lte o do envio, dealStatus: "ativa".
 $set: dealStatus: "cancelada", rdUpdatedAt.
-Retorna a venda cancelada ou null. Sem try/catch (não existe E11000 sem upsert).
-5.5 Tabela de comportamento esperado (cenários de teste)
-Evento Resultado no banco Popup
-Deal na etapa Blackfriday e marcado como ganho venda criada, ativa sim
-Deal na etapa Blackfriday mas ainda não ganho nada salvo não
-Mesmo evento reenviado dados reaplicados, sem duplicar não
-Só um custom field editado (updated_at igual, ex.: passagem) dado atualizado não
-Valor corrigido na RD value atualizado, realizedAt igual não
-Deal sai da etapa cancelada não
-Deal perdido, reaberto ou pausado (ainda na etapa) cancelada, dados atualizados não
-Venda cancelada editada ainda na etapa (valor, passagem, funil) dados atualizados, continua cancelada não
-Deal fora da etapa editado continua cancelada, dados não mudam não
-Deal nunca ganho editado na etapa nada salvo não
-Evento antigo chega depois do cancelamento nada muda não
-Deal volta para a etapa ativa, realizedAt igual não
-Deal vai para a etapa Blackfriday de outro funil segment/funnelType atualizados não
-Dono do deal não cadastrado como vendor nada salvo, console.warn não 6. Requisitos funcionais (telas)
+5.6 Tabela de comportamento esperado (cenários de teste)
+Linha na planilha Resultado no banco Popup
+Concluída pela primeira vez venda criada, ativa sim
+Reenviada (sincronização) sem mudança dados reaplicados, sem duplicar não
+Valor, data, passagens, setor ou classificação corrigidos dados atualizados não
+Status muda para Cancelada cancelada, dados atualizados não
+Cancelada com dados faltando só cancela não
+Volta para Concluída ativa de novo não
+Cancelada sem nunca ter sido concluída nada salvo não
+Envio antigo chega depois de um mais novo nada muda não
+Vendedor não cadastrado / dado faltando (Concluída) nada salvo, erro na resposta não
+Lote com uma linha errada as outras são gravadas sim (para as novas)
+6. Requisitos funcionais (telas)
 RF-01 — Meta Black
 Barra de progresso com o total vendido (soma de value das vendas ativas) e a meta.
 A meta vem do backend (RN-34).
@@ -249,27 +237,27 @@ Separação pelo funnelType da venda: o ranking de Vendas soma só vendas sales 
 Sem critério de desempate (empate fica na ordem que vier do banco).
 Query string: vendorDepartment=farm → farm; qualquer outro valor → sales.
 RF-04 — Ranking de SDR / passagens
-Top 3 por pontos de passagem: cada passagem vale POINTS_PER_PASSAGE. Retorno por pessoa: { sdrId, name, job, teamId, points, imageUrl } (mesmo nome de campo, points, do ranking de artilheiros).
+Top 3 por pontos de passagem: cada venda em que a pessoa participou da passagem vale POINTS_PER_PASSAGE para ela. Retorno por pessoa: { sdrId, name, job, teamId, points, imageUrl } (mesmo nome de campo, points, do ranking de artilheiros).
 Inclui todos da coleção SDR (SDR + Suporte + CS).
 RF-06 — Semana passada
 Placar, artilheiros e ranking de SDR também existem para a semana passada (rotas /last-week). Usam as mesmas funções do período semanal, com a semana anterior (segunda a domingo, America/Sao_Paulo).
 RF-05 — Tela do admin
-Somente leitura. A RD é a fonte da verdade: vendas só são criadas, editadas e canceladas pelo webhook; correções são feitas na RD. Não existe criação, edição nem deleção de venda pelo sistema (as rotas POST /sales/create e PATCH /sales/update foram removidas).
+Somente leitura. A planilha é a fonte da verdade: vendas só são criadas, editadas e canceladas pelo envio do Apps Script; correções são feitas na planilha. Não existe criação, edição nem deleção de venda pelo sistema (as rotas POST /sales/create e PATCH /sales/update foram removidas).
 O dash do admin mostra todas as vendas, ativas e canceladas (GET /sales/admin).
 
 RF-06b — Acesso às rotas
 Rotas do admin exigem login (authMiddleware, header Authorization: Bearer <token>): GET /sales/admin, GET /sales/get/:vendorId. Token ausente, inválido ou expirado → 401 (o front deve chamar /auth/refresh).
 Rotas das telas (TVs) são públicas: /analytics/*, GET /sales/get, GET /sales/events (SSE).
-Webhook: POST /sales/webhook/deal, protegido pelo header webhook_secret.
+Planilha: POST /sales/webhook/sheet, protegido pelo header webhook_secret.
 Auth: /auth/register, /auth/login e /auth/refresh são públicas (decisão: cadastro aberto). 7. Pendências e problemas conhecidos no código
 Decisões em aberto (⚠️ não implementar sem confirmação)
 Valores finais dos pontos (definidos pelo comercial antes da campanha).
 Problemas conhecidos
 Checklist antes da campanha
 Índice único de rdDealId existe no banco (Compass → Indexes).
-Todas as variáveis da seção 3 configuradas no Render, com ids de etapa.
-Seed executado com os ids reais da RD de todos os vendors e com os nomes dos SDRs iguais às opções do select de passagem.
-RD_PASSAGE_CUSTOM_FIELD_ID configurado com o id real do custom field.
-Webhook ativo antes de o comercial começar a mover deals para as etapas Blackfriday (senão o realizedAt fica errado).
+Índices únicos de vendorName (vendors) e name (sdrs) existem no banco.
+Todas as variáveis da seção 3 configuradas no Render.
+Seed executado com os nomes dos vendors e SDRs iguais aos textos usados nas colunas "Vendedor" e "Passagens" da planilha (mesma grafia, acentos e maiúsculas).
+Apps Script: URL_ENDPOINT apontando para https://<backend no Render>/sales/webhook/sheet, hash gerado por `node crypto.js` na propriedade WEBHOOK_SECRET do script, acionadores "Ao editar" (aoEditarPlanilha) e "A cada 10 minutos" (sincronizarTudo) criados.
+Coluna "Id da venda" oculta ou protegida na planilha.
 Nenhum log imprime o WEBHOOK_SECRET.
-B2B_FUNIL_BLACKFRIDAY_FARM preenchido (aguardando o comercial definir a etapa).

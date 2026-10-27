@@ -8,9 +8,9 @@ exports.findById = async (id) => {
   return await Vendors.findById(id);
 };
 
-exports.findByRdId = async(rdUserId) =>{
-  return await Vendors.findOne({ rdUserId })
-}
+exports.findByName = async (vendorName) => {
+  return await Vendors.findOne({ vendorName });
+};
 
 exports.findByTeam = async (teamId) => {
   return await Vendors.find({ teamId });

@@ -1,30 +1,14 @@
-// Etapas e pontos próprios dos testes, para não depender dos ids reais da RD
-// nem dos pontos que o comercial ainda vai definir.
-// Precisam ser definidos ANTES do dotenv e dos requires do projeto: o STAGE_MAP e
-// o pointsMap são montados no momento em que os arquivos de config são carregados,
+// Pontos e meta próprios dos testes, para não depender dos valores do .env.
+// Precisam ser definidos ANTES do dotenv e dos requires do projeto: o pointsMap e a
+// meta são montados no momento em que os arquivos de config são carregados,
 // e o dotenv não sobrescreve variáveis que já existem.
-const TEST_STAGES = {
-  B2B_SALES: "stage-b2b-sales",
-  B2B_FARM: "stage-b2b-farm",
-  B2G_SALES: "stage-b2g-sales",
-  B2G_FARM: "stage-b2g-farm",
-  OUTSIDE: "stage-fora-do-mapa",
-};
-
 const TEST_POINTS = { sales: 3, farm: 2, passage: 1 };
-
-const TEST_PASSAGE_FIELD_ID = "cf-passagem";
 
 const TEST_GOAL = 9000;
 
-process.env.B2B_FUNIL_BLACKFRIDAY_SALES = TEST_STAGES.B2B_SALES;
-process.env.B2B_FUNIL_BLACKFRIDAY_FARM = TEST_STAGES.B2B_FARM;
-process.env.B2G_FUNIL_BLACKFRIDAY_SALES = TEST_STAGES.B2G_SALES;
-process.env.B2G_FUNIL_BLACKFRIDAY_FARM = TEST_STAGES.B2G_FARM;
 process.env.POINTS_PER_SALE = String(TEST_POINTS.sales);
 process.env.POINTS_PER_FARM = String(TEST_POINTS.farm);
 process.env.POINTS_PER_PASSAGE = String(TEST_POINTS.passage);
-process.env.RD_PASSAGE_CUSTOM_FIELD_ID = TEST_PASSAGE_FIELD_ID;
 process.env.BLACK_FRIDAY_GOAL = String(TEST_GOAL);
 
 // O WEBHOOK_SECRET e o JWT_SECRET vêm do .env de verdade
@@ -35,7 +19,10 @@ const { mock } = require("node:test");
 const mongoose = require("mongoose");
 const { MongoMemoryServer } = require("mongodb-memory-server");
 
+const bcrypt = require("bcrypt");
+
 const { app } = require("../../app");
+const { buildWebhookSecretText } = require("../../shared/webhookSecretService");
 const Sales = require("../../features/sale/model/salesModel");
 const Vendors = require("../../features/vendors/model/vendorsModel");
 const SDR = require("../../features/sdr/model/sdrModel");
@@ -50,7 +37,7 @@ exports.startTestApp = async () => {
   const mongo = await MongoMemoryServer.create();
   await mongoose.connect(mongo.getUri());
 
-  // Garante que os índices únicos (rdDealId, rdUserId) já existem antes dos testes
+  // Garante que os índices únicos (rdDealId, nomes) já existem antes dos testes
   await Promise.all([Sales.init(), Vendors.init(), SDR.init()]);
 
   const server = app.listen(0);
@@ -68,7 +55,7 @@ exports.startTestApp = async () => {
   return { baseUrl, stop };
 };
 
-// Cadastro base: 3 times, vendors e SDRs com ids da RD fictícios
+// Cadastro base: 3 times, vendors e SDRs (encontrados pelo nome, como na planilha)
 exports.seedBase = async () => {
   const [teamA, teamB, teamC] = await Teams.create([
     { name: "Time A", imageUrl: "http://teste/camiseta_amarela.png" },
@@ -83,12 +70,13 @@ exports.seedBase = async () => {
     { rdUserId: "rd-user-c1", vendorName: "Vendor C1", teamId: teamC._id, job: "Executivo Venda" },
   ]);
 
-  const [sdrB, sdrC] = await SDR.create([
+  const [sdrB, sdrC, csB] = await SDR.create([
     { name: "SDR B", teamId: teamB._id, job: "sdr" },
     { name: "Suporte C", teamId: teamC._id, job: "suporte" },
+    { name: "CS B", teamId: teamB._id, job: "cs" },
   ]);
 
-  return { teamA, teamB, teamC, vendorA1, vendorA2, vendorB1, vendorC1, sdrB, sdrC };
+  return { teamA, teamB, teamC, vendorA1, vendorA2, vendorB1, vendorC1, sdrB, sdrC, csB };
 };
 
 exports.clearDatabase = async () => {
@@ -100,63 +88,56 @@ exports.clearDatabase = async () => {
   ]);
 };
 
-// Monta um payload no formato do webhook da RD (só os campos que o adapter lê).
-// deal_custom_fields segue o formato real: a RD manda o campo mesmo vazio, com value null.
-exports.buildRdPayload = ({
-  dealId = "rd-deal-1",
-  dealName = "Deal de teste",
-  stageId = TEST_STAGES.B2B_SALES,
-  status = "won",
+// Monta uma linha no formato que o Apps Script envia: as chaves são os nomes das
+// colunas da planilha, mais "linha" e "Atualizado em" (adicionados pelo script)
+exports.buildSheetRow = ({
+  id = "venda-1",
+  company = "Empresa Teste",
+  vendor = "Vendor A1",
+  passages = "",
+  sector = "B2B",
+  classification = "",
+  value = 1000,
+  saleDate = "2026-11-27T03:00:00.000Z",
+  status = "Concluída",
   updatedAt = "2026-11-27T13:00:00.123Z",
-  amount = 1000,
-  rdUserId = "rd-user-a1",
-  passageName = null,
+  row = 2,
 } = {}) => ({
-  document: {
-    id: dealId,
-    name: dealName,
-    amount_total: amount,
-    deal_stage: { id: stageId },
-    updated_at: updatedAt,
-    user: { id: rdUserId },
-    status,
-    deal_custom_fields: [
-      {
-        value: "Construtora",
-        custom_field: {
-          id: "cf-segmento",
-          label: "Segmento da Empresa",
-          opts: ["Construtora", "Incorporadora"],
-          type: "option",
-        },
-      },
-      {
-        value: passageName,
-        custom_field: {
-          id: TEST_PASSAGE_FIELD_ID,
-          label: "Passagem",
-          opts: ["SDR B", "Suporte C"],
-          type: "option",
-        },
-      },
-    ],
-  },
+  linha: row,
+  "Id da empresa": company,
+  Passagens: passages,
+  Vendedor: vendor,
+  Setor: sector,
+  "Classificação": classification,
+  "Valor da venda": value,
+  "Data da venda": saleDate,
+  Status: status,
+  "Id da venda": id,
+  "Atualizado em": updatedAt,
 });
 
-// Envia o webhook igual a RD: secret no header "webhook_secret".
-// Passe secret = null para mandar a requisição sem o header.
-exports.sendWebhook = async (baseUrl, payload, secret = process.env.WEBHOOK_SECRET) => {
-  const headers = { "Content-Type": "application/json" };
-  if (secret !== null) headers.webhook_secret = secret;
+// Hash que o Apps Script manda no header, igual ao gerado pelo crypto.js.
+// Custo 4 (e não 12) só para os testes rodarem rápido: o bcrypt.compare aceita qualquer custo
+let webhookHash = null;
+exports.getWebhookHash = async () => {
+  webhookHash ??= await bcrypt.hash(buildWebhookSecretText(), 4);
+  return webhookHash;
+};
 
-  return await fetch(`${baseUrl}/sales/webhook/deal`, {
+// Envia igual ao Apps Script: lista de linhas, hash no header "webhook_secret".
+// Aceita uma linha solta ou uma lista. Sem secret, usa o hash certo;
+// passe outro valor para testar recusas, ou null para mandar sem o header.
+exports.sendSheet = async (baseUrl, rows, secret) => {
+  const headerValue = secret === undefined ? await exports.getWebhookHash() : secret;
+  const headers = { "Content-Type": "application/json" };
+  if (headerValue !== null) headers.webhook_secret = headerValue;
+
+  return await fetch(`${baseUrl}/sales/webhook/sheet`, {
     method: "POST",
     headers,
-    body: JSON.stringify(payload),
+    body: JSON.stringify(Array.isArray(rows) ? rows : [rows]),
   });
 };
 
-exports.TEST_STAGES = TEST_STAGES;
 exports.TEST_POINTS = TEST_POINTS;
-exports.TEST_PASSAGE_FIELD_ID = TEST_PASSAGE_FIELD_ID;
 exports.TEST_GOAL = TEST_GOAL;

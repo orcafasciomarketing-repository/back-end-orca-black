@@ -59,11 +59,13 @@ exports.getScoreboard = async (period) => {
       );
     }
 
-    // Pontos de passagem vão para o time de quem fez a passagem
-    if (!sale.sdrId) continue;
-    const sdrTeamId = sdrTeamMap.get(sale.sdrId.toString());
-    if (sdrTeamId && teamPointsMap.has(sdrTeamId)) {
-      teamPointsMap.get(sdrTeamId).passage += pointsMap.get("passage");
+    // Cada pessoa da passagem dá pontos para o time dela
+    // (duas pessoas do mesmo time na mesma venda = pontos em dobro para o time)
+    for (const sdrId of sale.sdrIds) {
+      const sdrTeamId = sdrTeamMap.get(sdrId.toString());
+      if (sdrTeamId && teamPointsMap.has(sdrTeamId)) {
+        teamPointsMap.get(sdrTeamId).passage += pointsMap.get("passage");
+      }
     }
   }
 
@@ -107,7 +109,7 @@ exports.getVendorRanking = async (period, funnelType) => {
   };
 };
 
-// Pontos de passagem: cada passagem vale POINTS_PER_PASSAGE
+// Pontos de passagem: cada pessoa da passagem ganha POINTS_PER_PASSAGE por venda
 exports.getSdrRanking = async (period) => {
   const [sdrs, sales] = await Promise.all([
     SdrService.findAll(),
@@ -117,12 +119,13 @@ exports.getSdrRanking = async (period) => {
   const pointsBySdr = new Map();
 
   for (const sale of sales) {
-    if (!sale.sdrId) continue;
-    const sdrId = sale.sdrId.toString();
-    pointsBySdr.set(
-      sdrId,
-      (pointsBySdr.get(sdrId) || 0) + pointsMap.get("passage"),
-    );
+    for (const saleSdrId of sale.sdrIds) {
+      const sdrId = saleSdrId.toString();
+      pointsBySdr.set(
+        sdrId,
+        (pointsBySdr.get(sdrId) || 0) + pointsMap.get("passage"),
+      );
+    }
   }
 
   return sdrs

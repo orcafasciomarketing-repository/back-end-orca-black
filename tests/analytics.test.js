@@ -59,14 +59,14 @@ describe("Analytics", () => {
 
     await Sales.create([
       buildSale("s1", seed.vendorA1, "sales", weekStart),
-      buildSale("s2", seed.vendorA1, "farm", weekEnd, { sdrId: seed.sdrB._id }),
-      buildSale("s3", seed.vendorB1, "sales", lastWeek, { sdrId: seed.sdrC._id }),
+      buildSale("s2", seed.vendorA1, "farm", weekEnd, { sdrIds: [seed.sdrB._id] }),
+      buildSale("s3", seed.vendorB1, "sales", lastWeek, { sdrIds: [seed.sdrC._id] }),
       buildSale("s4", seed.vendorA2, "sales", new Date(weekStart.getTime() + DAY_MS), {
         dealStatus: "cancelada",
-        sdrId: seed.sdrC._id,
+        sdrIds: [seed.sdrC._id],
       }),
       buildSale("s5", seed.vendorA2, "farm", twoWeeksAgo),
-      buildSale("s6", seed.vendorC1, "sales", twoWeeksAgo, { sdrId: seed.sdrC._id }),
+      buildSale("s6", seed.vendorC1, "sales", twoWeeksAgo, { sdrIds: [seed.sdrC._id] }),
       buildSale("s7", seed.vendorC1, "sales", twoWeeksAgo),
       buildSale("s8", seed.vendorA2, "sales", twoWeeksAgo),
     ]);

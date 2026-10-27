@@ -7,8 +7,12 @@ const VendorSchema = new Schema(
       required: true,
       unique: true,
     },
+    // A planilha identifica o vendedor pelo nome: precisa ser único.
+    // sparse: vendors antigos sem nome não travam a criação do índice
     vendorName: {
       type: String,
+      unique: true,
+      sparse: true,
     },
     imageUrl: {
       type: String,

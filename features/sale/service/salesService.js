@@ -2,10 +2,10 @@ const SalesRepository = require("../repository/salesRepository");
 const VendorRepository = require("../../vendors/repository/vendorsRepository");
 const SdrRepository = require("../../sdr/repository/sdrRepository");
 const { broadcast } = require("../../../shared/sseManager");
-const { translateRdObject } = require("../adapters/rdDealAdapter");
-
-const { STAGE_MAP } = require("../../../config/rdStages");
-const { PASSAGE_CUSTOM_FIELD_ID } = require("../../../config/rdCustomFields");
+const {
+  translateSheetRow,
+  findSaleDataErrors,
+} = require("../adapters/sheetRowAdapter");
 
 // O Render roda em UTC, mas a semana do ranking segue o horário de São Paulo.
 // O Brasil não tem mais horário de verão, então a diferença é sempre de 3 horas.
@@ -72,16 +72,25 @@ exports.findActiveByPeriod = async (period) => {
   return await SalesRepository.findActiveByRealizedAt(startOfWeek, finalOfWeek);
 };
 
+const toPopupPerson = (sdr) => ({
+  name: sdr.name,
+  job: sdr.job,
+  imageUrl: sdr.imageUrl,
+});
+
 // Evento SSE de venda nova: só os campos que o popup usa (o SSE vai para todas as telas)
-const buildNewSaleEvent = (sale, vendor, sdr) => ({
+const buildNewSaleEvent = (sale, vendor, sdrs) => ({
   sale: { _id: sale._id, funnelType: sale.funnelType },
   vendor: {
     vendorName: vendor.vendorName,
     job: vendor.job,
     imageUrl: vendor.imageUrl,
   },
-  ...(sdr && {
-    sdr: { name: sdr.name, job: sdr.job, imageUrl: sdr.imageUrl },
+  ...(sdrs.length > 0 && {
+    sdrs: sdrs.map(toPopupPerson),
+    // Compatibilidade: o popup atual do front lê só "sdr" (uma pessoa).
+    // Remover quando o front passar a mostrar a lista "sdrs"
+    sdr: toPopupPerson(sdrs[0]),
   }),
 });
 
@@ -89,55 +98,97 @@ const buildNewSaleEvent = (sale, vendor, sdr) => ({
 // buscam os dados de novo, sem popup (o front só abre popup com sale + vendor)
 const SALE_UPDATED_EVENT = { type: "sale-updated" };
 
-exports.rdDealEventProcess = async (salesData) => {
-  const saleObject = translateRdObject(
-    salesData,
-    STAGE_MAP,
-    PASSAGE_CUSTOM_FIELD_ID,
-  );
+// Busca as pessoas da passagem pelo nome. Nomes fora do cadastro são descartados
+// e a venda segue com os que existem, na ordem em que vieram da planilha
+const findPassageSdrs = async (passageNames) => {
+  if (passageNames.length === 0) return [];
 
-  // Fora das etapas Blackfriday: só cancela a venda (se existir e estiver ativa)
-  if (!saleObject.isBlackFridayStage) {
+  const sdrs = await SdrRepository.findByNames(passageNames);
+  return sdrs.sort(
+    (a, b) => passageNames.indexOf(a.name) - passageNames.indexOf(b.name),
+  );
+};
+
+// Processa uma linha da planilha. Devolve o resultado (vai na resposta para o log
+// do Apps Script) e os eventos SSE que a linha gerou
+const processSheetRow = async (row) => {
+  const saleObject = translateSheetRow(row);
+  const result = { linha: saleObject.sheetRow, idVenda: saleObject.rdDealId };
+
+  if (!saleObject.rdDealId) {
+    return { ...result, status: "erro", mensagem: "Linha sem Id da venda" };
+  }
+  if (!saleObject.rdUpdatedAt) {
+    return { ...result, status: "erro", mensagem: "Atualizado em inválido" };
+  }
+
+  const dataErrors = findSaleDataErrors(saleObject);
+  const vendor = saleObject.vendorName
+    ? await VendorRepository.findByName(saleObject.vendorName)
+    : null;
+  if (saleObject.vendorName && !vendor) {
+    dataErrors.push(`Vendedor "${saleObject.vendorName}" não cadastrado`);
+  }
+
+  // Cancelada (ou qualquer status diferente de Concluída)
+  if (!saleObject.isConcluded) {
+    // Com os dados completos: a venda (se existir) recebe os dados e fica cancelada.
+    // Com dados faltando: só cancela. Nos dois casos nunca cria venda
+    if (dataErrors.length === 0) {
+      saleObject.vendorId = vendor._id;
+      saleObject.sdrIds = (await findPassageSdrs(saleObject.rdPassageNames)).map(
+        (sdr) => sdr._id,
+      );
+      const updatedSale = await SalesRepository.updateCanceledByDealId(saleObject);
+      return { ...result, status: updatedSale ? "cancelada" : "ignorada", changed: !!updatedSale };
+    }
+
     const canceledSale = await SalesRepository.cancelByDealId(
       saleObject.rdDealId,
       saleObject.rdUpdatedAt,
     );
-    if (canceledSale) broadcast(SALE_UPDATED_EVENT);
-    return;
+    return { ...result, status: canceledSale ? "cancelada" : "ignorada", changed: !!canceledSale };
   }
 
-  const vendor = await VendorRepository.findByRdId(saleObject.rdUserId);
-
-  if (!vendor) {
-    console.warn(
-      `Vendor ${saleObject.rdUserId} não cadastrado no sistema. Venda ${saleObject.rdDealId} não concluída`,
-    );
-    return;
+  // Concluída com dado faltando ou vendedor não cadastrado: não grava
+  if (dataErrors.length > 0) {
+    return { ...result, status: "erro", mensagem: dataErrors.join("; ") };
   }
 
   saleObject.vendorId = vendor._id;
-
-  // Nome fora do cadastro de SDR: a passagem é descartada e a venda segue sem ela
-  let sdr = null;
-  if (saleObject.rdPassageName) {
-    sdr = await SdrRepository.findByName(saleObject.rdPassageName);
-    if (sdr) saleObject.sdrId = sdr._id;
-  }
-
-  // Na etapa mas não ganho: a venda (se já existir) recebe os dados e fica cancelada
-  if (!saleObject.isBlackFriday) {
-    const updatedSale = await SalesRepository.updateCanceledByDealId(saleObject);
-    if (updatedSale) broadcast(SALE_UPDATED_EVENT);
-    return;
-  }
+  const sdrs = await findPassageSdrs(saleObject.rdPassageNames);
+  saleObject.sdrIds = sdrs.map((sdr) => sdr._id);
 
   const savedObject = await SalesRepository.upsertActiveByDealId(saleObject);
 
   // Venda nova → popup. Atualização ou reativação → só atualiza as telas.
-  // Evento antigo ignorado (sale null) → nada muda, nada é enviado.
+  // Envio antigo ignorado (sale null) → nada muda, nada é enviado
   if (savedObject.created) {
-    broadcast(buildNewSaleEvent(savedObject.sale, vendor, sdr));
-  } else if (savedObject.sale) {
-    broadcast(SALE_UPDATED_EVENT);
+    return {
+      ...result,
+      status: "criada",
+      newSaleEvent: buildNewSaleEvent(savedObject.sale, vendor, sdrs),
+    };
   }
+  if (savedObject.sale) return { ...result, status: "atualizada", changed: true };
+  return { ...result, status: "ignorada", mensagem: "Envio mais antigo que o já salvo" };
+};
+
+// rows: lista de linhas enviada pelo Apps Script (um lote)
+exports.sheetSalesProcess = async (rows) => {
+  const results = [];
+
+  // Uma linha por vez: duas linhas da mesma venda no lote não disputam a gravação
+  for (const row of rows) {
+    results.push(await processSheetRow(row));
+  }
+
+  // Popup para cada venda nova. Para as alterações, um único aviso por lote:
+  // a sincronização reenvia a planilha toda e as TVs não precisam buscar os dados N vezes
+  for (const result of results) {
+    if (result.newSaleEvent) broadcast(result.newSaleEvent);
+  }
+  if (results.some((result) => result.changed)) broadcast(SALE_UPDATED_EVENT);
+
+  return results.map(({ newSaleEvent, changed, ...result }) => result);
 };

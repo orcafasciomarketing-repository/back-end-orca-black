@@ -19,7 +19,7 @@ Erros passam pelo handler global e retornam `{ "error": "mensagem" }` com o stat
 | GET | `/sales/get` | Pública | query `page`, `limit` | `getWeekSales` → `findActiveByWeek` |
 | GET | `/sales/get/:vendorId` | **Privada** (JWT) | path `vendorId` | `getSalesByVendor` → `findByVendor` |
 | GET | `/sales/events` | Pública | — | `getClient` (SSE) |
-| POST | `/sales/webhook/deal` | Protegida por segredo | header `webhook_secret`, body | `webhookSaleEntry` → `rdDealEventProcess` |
+| POST | `/sales/webhook/sheet` | Protegida por segredo | header `webhook_secret`, body | `sheetSaleEntry` → `sheetSalesProcess` |
 | GET | `/vendor/list` | Pública | — | `getAllVendors` → `findAll` |
 | GET | `/sdr/list` | Pública | — | `getAllSdrs` → `findAll` |
 | GET | `/analytics/goal` | Pública | — | `getGoalProgress` → `getGoalProgress` |
@@ -99,7 +99,7 @@ Gera um novo access token a partir do refresh token e renova o cookie.
 
 ## Vendas — `/sales`
 
-As vendas são **somente leitura** no sistema: só são criadas, atualizadas e canceladas pelo webhook da RD (a RD é a fonte da verdade). Correções são feitas na RD.
+As vendas são **somente leitura** no sistema: só são criadas, atualizadas e canceladas pela planilha (a planilha é a fonte da verdade). Correções são feitas na planilha.
 
 ### Formato de uma venda
 
@@ -109,7 +109,7 @@ As vendas são **somente leitura** no sistema: só são criadas, atualizadas e c
   "rdDealId": "698c8b9bcba0e30015883816",
   "rdDealName": "Nome da negociação",
   "vendorId": { "_id": "...", "vendorName": "...", "imageUrl": "...", "teamId": "...", "job": "..." },
-  "sdrId": { "_id": "...", "name": "...", "imageUrl": "...", "teamId": "...", "job": "..." },
+  "sdrIds": [{ "_id": "...", "name": "...", "imageUrl": "...", "teamId": "...", "job": "..." }],
   "value": 1199,
   "segment": "b2b",
   "funnelType": "sales",
@@ -123,11 +123,11 @@ As vendas são **somente leitura** no sistema: só são criadas, atualizadas e c
 
 | Campo | Descrição |
 |---|---|
-| `vendorId` / `sdrId` | Nas rotas de `/sales` vêm **populados** (objeto do vendedor/SDR). `sdrId` só existe se a venda teve passagem. |
+| `vendorId` / `sdrIds` | Nas rotas de `/sales` vêm **populados** (objeto do vendedor e lista de objetos das pessoas da passagem). `sdrIds` é uma lista: vazia quando a venda não teve passagem, com uma ou mais pessoas quando teve. |
 | `segment` | `b2b` ou `b2g`. |
 | `funnelType` | `sales` (Vendas) ou `farm` (Renovação). |
 | `dealStatus` | `ativa` ou `cancelada`. Só vendas ativas contam nas telas. |
-| `realizedAt` | Data em que a venda foi criada (deal ganho na etapa Blackfriday). Nunca muda. É a data usada nos filtros de semana. |
+| `realizedAt` | Coluna "Data da venda" da planilha. É a data usada nos filtros de semana. |
 
 ### `GET /sales/admin` — Privada
 
@@ -172,11 +172,14 @@ Existem dois tipos de evento:
 {
   "sale": { "_id": "...", "funnelType": "sales" },
   "vendor": { "vendorName": "...", "job": "...", "imageUrl": "..." },
+  "sdrs": [{ "name": "...", "job": "...", "imageUrl": "..." }],
   "sdr": { "name": "...", "job": "...", "imageUrl": "..." }
 }
 ```
 
-- `sdr` só existe quando a venda teve passagem.
+- `sdrs` e `sdr` só existem quando a venda teve passagem.
+- `sdrs` é a lista de **todas** as pessoas da passagem, na ordem em que vieram da planilha.
+- `sdr` é a primeira pessoa da lista. Existe só para o popup atual do front, que mostra uma pessoa; sai quando o popup passar a mostrar a lista `sdrs`.
 - `funnelType` é `sales` (Venda) ou `farm` (Renovação).
 - Só vão os campos que o popup usa, porque o evento chega a todas as telas conectadas. Um campo sem valor no banco (ex.: `imageUrl`) não aparece no JSON.
 
@@ -186,30 +189,74 @@ Existem dois tipos de evento:
 { "type": "sale-updated" }
 ```
 
-Enviado quando uma venda é cancelada, reativada ou tem algum dado corrigido. Reenvios da RD também disparam esse evento, o que só faz as telas buscarem os dados de novo.
+Enviado quando uma venda é cancelada, reativada ou tem algum dado corrigido. Vai **um por envio**, mesmo que o envio altere várias vendas (a sincronização de 10 em 10 minutos reenvia a planilha toda e dispara um único aviso).
 
-**Nenhum evento** quando nada muda no banco: deal de outro funil, deal na etapa que nunca foi ganho, evento atrasado ou vendedor não cadastrado.
+**Nenhum evento** quando nada muda no banco: linha cancelada que nunca foi concluída, linha com erro ou envio atrasado.
 
-### `POST /sales/webhook/deal` — Protegida por segredo
+### `POST /sales/webhook/sheet` — Protegida por segredo
 
-Recebe os eventos de negociação da RD Station. Não usa JWT: valida o header contra a variável `WEBHOOK_SECRET` do `.env`.
+Recebe as linhas da planilha de vendas, enviadas pelo Apps Script. Não usa JWT: o header `webhook_secret` traz o **hash bcrypt** de `WEBHOOK_SECRET + WEBHOOK_CRYPTO_PEPPER`, gerado uma vez com `node crypto.js` e guardado nas Propriedades do script. O backend confere com `bcrypt.compare`. Se o segredo ou o pepper não estiverem configurados no servidor, recusa tudo.
 
 | Parâmetro | Onde | Descrição |
 |---|---|---|
-| `webhook_secret` | header | Precisa ser igual a `WEBHOOK_SECRET`, senão retorna `401`. |
-| body | JSON | Payload da RD. Campos usados (dentro de `document`): `id`, `name`, `amount_total`, `deal_stage.id`, `updated_at`, `user.id`, `status` e `deal_custom_fields` (campo de passagem do SDR). |
+| `webhook_secret` | header | Hash bcrypt de `WEBHOOK_SECRET + WEBHOOK_CRYPTO_PEPPER`. Segredo em texto puro, hash sem o pepper ou hash de outro segredo → `401 Acesso negado`. |
+| body | JSON | **Lista** de linhas (o Apps Script manda em lotes de 50). Uma linha solta também é aceita. |
 
-**Resposta:** `200 { received: true }` — inclusive para eventos ignorados (a RD não lê o corpo).
+**Formato de uma linha** (as chaves são os nomes das colunas da planilha):
 
-**O que acontece com cada evento:**
+```json
+{
+  "linha": 2,
+  "Id da venda": "3f2b9c1e-...",
+  "Atualizado em": "2026-10-27T15:00:00.000Z",
+  "Id da empresa": "teste",
+  "Vendedor": "Renan Souza",
+  "Passagens": "Ana Clara, Victor Batilochi",
+  "Setor": "B2B",
+  "Classificação": "Renovação",
+  "Valor da venda": 10000,
+  "Data da venda": "2026-10-03T03:00:00.000Z",
+  "Status": "Concluída"
+}
+```
 
-| Situação do deal na RD | Resultado no banco |
-|---|---|
-| Na etapa Blackfriday **e** ganho (`won`) | Cria a venda como `ativa` (ou atualiza e reativa, se já existir) |
-| Na etapa Blackfriday, **não** ganho | Se a venda existir: atualiza os dados e deixa `cancelada`. Se não existir: nada |
-| Fora das etapas Blackfriday | Cancela a venda, se existir (os dados não mudam) |
-| Dono do deal não cadastrado como vendor | Nada salvo (aviso no log) |
-| Evento mais antigo que o último aplicado | Ignorado |
+| Coluna | Vira | Regra |
+|---|---|---|
+| `Id da venda` | `rdDealId` | Obrigatório. UUID gerado pelo Apps Script. Identifica a venda em todos os envios |
+| `Atualizado em` | `rdUpdatedAt` | Obrigatório. Momento do envio. Envio mais antigo que o já salvo é ignorado |
+| `Id da empresa` | `rdDealName` | Mostrado como "Negociação" no admin |
+| `Vendedor` | `vendorId` | Busca o vendor pelo `vendorName` (texto exato) |
+| `Passagens` | `sdrIds` | Nomes separados por vírgula. Busca cada SDR pelo `name`; nome desconhecido é descartado |
+| `Setor` | `segment` | `B2B` ou `B2G` (sem diferenciar maiúsculas) |
+| `Classificação` | `funnelType` | `Renovação` = `farm`; vazio = `sales` |
+| `Valor da venda` | `value` | Número ≥ 0 |
+| `Data da venda` | `realizedAt` | Data usada nos filtros de semana. Pode ser corrigida |
+| `Status` | `dealStatus` | `Concluída` = `ativa`; `Cancelada` (ou outro) = `cancelada` |
+
+**Resposta:** `200` com o resultado de cada linha, que aparece no log do Apps Script:
+
+```json
+{
+  "success": true,
+  "data": [
+    { "linha": 2, "idVenda": "3f2b9c1e-...", "status": "criada" },
+    { "linha": 3, "idVenda": "a81c...", "status": "erro", "mensagem": "Vendedor \"Fulano\" não cadastrado" }
+  ],
+  "message": "Linhas da planilha processadas"
+}
+```
+
+**O que acontece com cada linha:**
+
+| Situação da linha | `status` na resposta | Resultado no banco |
+|---|---|---|
+| `Concluída` pela primeira vez | `criada` | Cria a venda como `ativa` (popup nas TVs) |
+| `Concluída`, venda já existe | `atualizada` | Atualiza os dados (e reativa, se estava cancelada) |
+| Não `Concluída`, venda existe | `cancelada` | Cancela. Com os dados completos, também atualiza os dados |
+| Não `Concluída`, venda nunca existiu | `ignorada` | Nada |
+| Envio mais antigo que o já salvo | `ignorada` | Nada |
+| `Concluída` com vendedor não cadastrado, setor inválido, valor ou data inválidos | `erro` | Nada (as outras linhas do lote seguem normalmente) |
+| Sem `Id da venda` ou `Atualizado em` | `erro` | Nada |
 
 ---
 
@@ -243,7 +290,7 @@ Todas as rotas consideram **só vendas ativas**. Valores inválidos ou ausentes 
 |---|---|---|
 | Venda (`funnelType: sales`) | `POINTS_PER_SALE` | quem vendeu |
 | Renovação (`funnelType: farm`) | `POINTS_PER_FARM` | quem vendeu |
-| Passagem (`sdrId` na venda) | `POINTS_PER_PASSAGE` | quem fez a passagem |
+| Passagem (cada pessoa em `sdrIds`) | `POINTS_PER_PASSAGE` por pessoa | cada pessoa que participou da passagem |
 
 **Períodos:** `week` = semana atual e `last-week` = semana passada (segunda 00:00 a domingo 23:59, horário de São Paulo); `all` = campanha inteira. O filtro usa a data da venda (`realizedAt`).
 
@@ -383,7 +430,8 @@ Não existem mais (retornam `404`). Se o front ainda chama alguma delas, precisa
 
 | Rota | Motivo |
 |---|---|
-| `POST /sales/create` | Vendas só entram pelo webhook da RD. |
-| `PATCH /sales/update/:salesId` | Admin é somente leitura; correções são feitas na RD. |
+| `POST /sales/webhook/deal` | O comercial deixou de usar a RD. Vendas entram pela planilha (`/sales/webhook/sheet`). |
+| `POST /sales/create` | Vendas só entram pela planilha. |
+| `PATCH /sales/update/:salesId` | Admin é somente leitura; correções são feitas na planilha. |
 | `GET /analytics/teams/:teamId` | Escalação do time removida. |
 | `GET /auth/callback` | Era rota de teste. |

@@ -30,7 +30,7 @@ const seedVendorData = [
     teamName: "Wizards of sales",
   },
   {
-    vendorNameame: "Renan Souza",
+    vendorName: "Renan Souza",
     rdUserId: "69a59e77489a750013588135",
     job: "B2B Farmer",
     teamName: "Orçawinx",
@@ -48,7 +48,7 @@ const seedVendorData = [
     teamName: "Wizards of sales",
   },
   {
-    vendorName: "Danne Albuqerque",
+    vendorName: "Danne Allbuquerque",
     rdUserId: "632cf85b356f19000c64f466",
     job: "B2B Farmer",
     teamName: "Orçawinx",
@@ -155,7 +155,6 @@ const seedSdrData = [
   },
   {
     name: "Matheus Vicente",
-
     job: "B2B SDR",
     teamName: "Orçawinx",
   },
