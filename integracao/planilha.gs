@@ -17,20 +17,21 @@
 
 // ===== CONFIGURAÇÃO: ajuste aqui =====
 const CONFIG = {
-  ABA_ORIGEM: 'Vendas Gerais',
+  ABA_ORIGEM: "Vendas Gerais",
   LINHA_CABECALHO: 1,
-  NOME_COLUNA_STATUS: 'Status',
-  NOME_COLUNA_ID: 'Id da venda',
-  STATUS_VENDA_CONCLUIDA: 'Concluída',
-  URL_ENDPOINT: 'COLE_AQUI_A_URL_DO_SEU_ENDPOINT',
+  NOME_COLUNA_STATUS: "Status",
+  NOME_COLUNA_ID: "Id da venda",
+  STATUS_VENDA_CONCLUIDA: "Concluída",
+  URL_ENDPOINT: "COLE_AQUI_A_URL_DO_SEU_ENDPOINT",
   TAMANHO_LOTE: 50,
 };
 
 // O segredo NÃO fica no código: Configurações do projeto → Propriedades do script
 // → WEBHOOK_SECRET com o hash gerado por `node crypto.js` no backend
 function lerSegredo() {
-  const segredo = PropertiesService.getScriptProperties().getProperty('WEBHOOK_SECRET');
-  if (!segredo) throw new Error('Propriedade WEBHOOK_SECRET não configurada');
+  const segredo =
+    PropertiesService.getScriptProperties().getProperty("WEBHOOK_SECRET");
+  if (!segredo) throw new Error("Propriedade WEBHOOK_SECRET não configurada");
   return segredo;
 }
 
@@ -66,7 +67,12 @@ function sincronizarTudo() {
   const trava = LockService.getScriptLock();
   trava.waitLock(30000);
   try {
-    const vendas = montarVendas(aba, CONFIG.LINHA_CABECALHO + 1, ultimaLinha, false);
+    const vendas = montarVendas(
+      aba,
+      CONFIG.LINHA_CABECALHO + 1,
+      ultimaLinha,
+      false,
+    );
     enviarVendas(vendas);
   } finally {
     trava.releaseLock();
@@ -79,7 +85,9 @@ function montarVendas(aba, linhaInicio, linhaFim, corrigirIdsCopiados) {
 
   const colunaStatus = cabecalhos.indexOf(CONFIG.NOME_COLUNA_STATUS);
   if (colunaStatus === -1) {
-    console.error(`Coluna "${CONFIG.NOME_COLUNA_STATUS}" não encontrada no cabeçalho`);
+    console.error(
+      `Coluna "${CONFIG.NOME_COLUNA_STATUS}" não encontrada no cabeçalho`,
+    );
     return [];
   }
   const colunaId = garantirColunaId(aba, cabecalhos);
@@ -99,14 +107,15 @@ function montarVendas(aba, linhaInicio, linhaFim, corrigirIdsCopiados) {
 
   linhas.forEach((valores, i) => {
     const numeroLinha = linhaInicio + i;
-    const concluida = String(valores[colunaStatus]).trim() === CONFIG.STATUS_VENDA_CONCLUIDA;
+    const concluida =
+      String(valores[colunaStatus]).trim() === CONFIG.STATUS_VENDA_CONCLUIDA;
     let id = String(valores[colunaId]).trim();
 
     // Linha que nunca foi venda concluída não interessa ao sistema
     if (!concluida && !id) return;
 
     // Linha colada com o id de outra linha: ganha um id novo, senão sobrescreveria a outra venda
-    if (id && idsForaDaEdicao.has(id)) id = '';
+    if (id && idsForaDaEdicao.has(id)) id = "";
 
     // Primeira vez como concluída: gera o id único da venda e grava na planilha
     if (!id) {
@@ -114,7 +123,7 @@ function montarVendas(aba, linhaInicio, linhaFim, corrigirIdsCopiados) {
       aba.getRange(numeroLinha, colunaId + 1).setValue(id);
     }
 
-    const venda = { linha: numeroLinha, 'Atualizado em': atualizadoEm };
+    const venda = { linha: numeroLinha, "Atualizado em": atualizadoEm };
     cabecalhos.forEach((nome, j) => {
       if (nome) venda[nome] = valores[j];
     });
@@ -138,7 +147,9 @@ function garantirColunaId(aba, cabecalhos) {
   let coluna = cabecalhos.indexOf(CONFIG.NOME_COLUNA_ID);
   if (coluna === -1) {
     coluna = cabecalhos.length;
-    aba.getRange(CONFIG.LINHA_CABECALHO, coluna + 1).setValue(CONFIG.NOME_COLUNA_ID);
+    aba
+      .getRange(CONFIG.LINHA_CABECALHO, coluna + 1)
+      .setValue(CONFIG.NOME_COLUNA_ID);
     cabecalhos.push(CONFIG.NOME_COLUNA_ID);
   }
   return coluna;
@@ -155,7 +166,8 @@ function lerIdsForaDoIntervalo(aba, colunaId, linhaInicio, linhaFim) {
     .getValues()
     .forEach(([id], i) => {
       const numeroLinha = primeiraLinha + i;
-      const dentroDaEdicao = numeroLinha >= linhaInicio && numeroLinha <= linhaFim;
+      const dentroDaEdicao =
+        numeroLinha >= linhaInicio && numeroLinha <= linhaFim;
       if (id && !dentroDaEdicao) ids.add(String(id).trim());
     });
   return ids;
@@ -169,11 +181,11 @@ function enviarVendas(vendas) {
 }
 
 function enviarLote(lote) {
-  const linhas = lote.map((venda) => venda.linha).join(', ');
+  const linhas = lote.map((venda) => venda.linha).join(", ");
   try {
     const resposta = UrlFetchApp.fetch(CONFIG.URL_ENDPOINT, {
-      method: 'post',
-      contentType: 'application/json',
+      method: "post",
+      contentType: "application/json",
       // Hash do segredo no header: o backend recusa (401) envios sem ele
       headers: { webhook_secret: lerSegredo() },
       payload: JSON.stringify(lote),
@@ -182,9 +194,13 @@ function enviarLote(lote) {
 
     const codigo = resposta.getResponseCode();
     if (codigo >= 200 && codigo < 300) {
-      console.log(`Linhas ${linhas} enviadas (HTTP ${codigo}): ${resposta.getContentText()}`);
+      console.log(
+        `Linhas ${linhas} enviadas (HTTP ${codigo}): ${resposta.getContentText()}`,
+      );
     } else {
-      console.error(`Falha nas linhas ${linhas}: HTTP ${codigo} - ${resposta.getContentText()}`);
+      console.error(
+        `Falha nas linhas ${linhas}: HTTP ${codigo} - ${resposta.getContentText()}`,
+      );
     }
   } catch (erro) {
     console.error(`Erro de rede nas linhas ${linhas}: ${erro}`);
