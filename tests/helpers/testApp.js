@@ -19,10 +19,7 @@ const { mock } = require("node:test");
 const mongoose = require("mongoose");
 const { MongoMemoryServer } = require("mongodb-memory-server");
 
-const bcrypt = require("bcrypt");
-
 const { app } = require("../../app");
-const { buildWebhookSecretText } = require("../../shared/webhookSecretService");
 const Sales = require("../../features/sale/model/salesModel");
 const Vendors = require("../../features/vendors/model/vendorsModel");
 const SDR = require("../../features/sdr/model/sdrModel");
@@ -116,19 +113,11 @@ exports.buildSheetRow = ({
   "Atualizado em": updatedAt,
 });
 
-// Hash que o Apps Script manda no header, igual ao gerado pelo crypto.js.
-// Custo 4 (e não 12) só para os testes rodarem rápido: o bcrypt.compare aceita qualquer custo
-let webhookHash = null;
-exports.getWebhookHash = async () => {
-  webhookHash ??= await bcrypt.hash(buildWebhookSecretText(), 4);
-  return webhookHash;
-};
-
-// Envia igual ao Apps Script: lista de linhas, hash no header "webhook_secret".
-// Aceita uma linha solta ou uma lista. Sem secret, usa o hash certo;
+// Envia igual ao Apps Script: lista de linhas, segredo no header "webhook_secret".
+// Aceita uma linha solta ou uma lista. Sem secret, usa o WEBHOOK_SECRET do .env;
 // passe outro valor para testar recusas, ou null para mandar sem o header.
 exports.sendSheet = async (baseUrl, rows, secret) => {
-  const headerValue = secret === undefined ? await exports.getWebhookHash() : secret;
+  const headerValue = secret === undefined ? process.env.WEBHOOK_SECRET : secret;
   const headers = { "Content-Type": "application/json" };
   if (headerValue !== null) headers.webhook_secret = headerValue;
 

@@ -5,9 +5,8 @@
 // Instalação:
 // 1. Cole este código no editor do Apps Script da planilha e preencha URL_ENDPOINT
 //    (https://<backend no Render>/sales/webhook/sheet).
-// 2. No backend, rode `node crypto.js` e copie o hash impresso para
-//    Configurações do projeto → Propriedades do script → WEBHOOK_SECRET.
-//    (O script manda o hash, não o segredo. Gere de novo se o segredo ou o pepper do .env mudarem.)
+// 2. Em Configurações do projeto → Propriedades do script → WEBHOOK_SECRET,
+//    coloque o mesmo valor do WEBHOOK_SECRET do backend (Render).
 // 3. Acionadores: aoEditarPlanilha (Da planilha, Ao editar) e sincronizarTudo (Baseado no tempo, a cada 10 minutos).
 //
 // Regras para quem usa a planilha:
@@ -27,7 +26,7 @@ const CONFIG = {
 };
 
 // O segredo NÃO fica no código: Configurações do projeto → Propriedades do script
-// → WEBHOOK_SECRET com o hash gerado por `node crypto.js` no backend
+// → WEBHOOK_SECRET (mesmo valor do WEBHOOK_SECRET do backend)
 function lerSegredo() {
   const segredo =
     PropertiesService.getScriptProperties().getProperty("WEBHOOK_SECRET");

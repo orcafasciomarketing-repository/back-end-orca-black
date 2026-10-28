@@ -195,11 +195,11 @@ Enviado quando uma venda é cancelada, reativada ou tem algum dado corrigido. Va
 
 ### `POST /sales/webhook/sheet` — Protegida por segredo
 
-Recebe as linhas da planilha de vendas, enviadas pelo Apps Script. Não usa JWT: o header `webhook_secret` traz o **hash bcrypt** de `WEBHOOK_SECRET + WEBHOOK_CRYPTO_PEPPER`, gerado uma vez com `node crypto.js` e guardado nas Propriedades do script. O backend confere com `bcrypt.compare`. Se o segredo ou o pepper não estiverem configurados no servidor, recusa tudo.
+Recebe as linhas da planilha de vendas, enviadas pelo Apps Script. Não usa JWT: o header `webhook_secret` (ou `x-webhook-secret`) traz o mesmo valor do `WEBHOOK_SECRET` do servidor, guardado nas Propriedades do script. Se o segredo não estiver configurado no servidor, recusa tudo.
 
 | Parâmetro | Onde | Descrição |
 |---|---|---|
-| `webhook_secret` | header | Hash bcrypt de `WEBHOOK_SECRET + WEBHOOK_CRYPTO_PEPPER`. Segredo em texto puro, hash sem o pepper ou hash de outro segredo → `401 Acesso negado`. |
+| `webhook_secret` ou `x-webhook-secret` | header | Igual ao `WEBHOOK_SECRET` do servidor. Diferente ou ausente → `401 Acesso negado`. |
 | body | JSON | **Lista** de linhas (o Apps Script manda em lotes de 50). Uma linha solta também é aceita. |
 
 **Formato de uma linha** (as chaves são os nomes das colunas da planilha):

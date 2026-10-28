@@ -1,4 +1,4 @@
-const { describe, it, before, after, beforeEach, mock } = require("node:test");
+const { describe, it, before, after, beforeEach } = require("node:test");
 const assert = require("node:assert/strict");
 
 const {
@@ -7,12 +7,8 @@ const {
   clearDatabase,
   buildSheetRow,
   sendSheet,
-  getWebhookHash,
   TEST_POINTS,
 } = require("./helpers/testApp");
-
-const bcrypt = require("bcrypt");
-const { resetWebhookSecretCache } = require("../shared/webhookSecretService");
 
 const Sales = require("../features/sale/model/salesModel");
 const Vendors = require("../features/vendors/model/vendorsModel");
@@ -55,29 +51,24 @@ describe("Planilha (POST /sales/webhook/sheet)", () => {
     return data.find((team) => team.teamName === teamName);
   };
 
-  describe("segredo do header webhook_secret (hash bcrypt de segredo + pepper)", () => {
+  describe("segredo do header webhook_secret (mesmo valor do WEBHOOK_SECRET do .env)", () => {
     // Troca uma variável de ambiente só durante o teste
     const withEnv = async (name, value, run) => {
       const original = process.env[name];
       if (value === undefined) delete process.env[name];
       else process.env[name] = value;
-      resetWebhookSecretCache();
       try {
         await run();
       } finally {
         process.env[name] = original;
-        resetWebhookSecretCache();
       }
     };
 
-    beforeEach(() => resetWebhookSecretCache());
-
-    it("WEBHOOK_SECRET e WEBHOOK_CRYPTO_PEPPER precisam existir no .env para estes testes fazerem sentido", () => {
+    it("WEBHOOK_SECRET precisa existir no .env para estes testes fazerem sentido", () => {
       assert.ok(process.env.WEBHOOK_SECRET, "WEBHOOK_SECRET não está no .env");
-      assert.ok(process.env.WEBHOOK_CRYPTO_PEPPER, "WEBHOOK_CRYPTO_PEPPER não está no .env");
     });
 
-    it("hash certo → 200 com o resultado de cada linha", async () => {
+    it("segredo certo → 200 com o resultado de cada linha", async () => {
       const res = await sendSheet(testApp.baseUrl, buildSheetRow());
       const body = await res.json();
 
@@ -85,25 +76,25 @@ describe("Planilha (POST /sales/webhook/sheet)", () => {
       assert.deepEqual(body.data, [{ linha: 2, idVenda: "venda-1", status: "criada" }]);
     });
 
-    it("segredo em texto puro (sem hash) → 401: vazar o segredo sozinho não basta", async () => {
-      const res = await sendSheet(testApp.baseUrl, buildSheetRow(), process.env.WEBHOOK_SECRET);
+    it("segredo no header x-webhook-secret também é aceito", async () => {
+      const res = await fetch(`${testApp.baseUrl}/sales/webhook/sheet`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-webhook-secret": process.env.WEBHOOK_SECRET },
+        body: JSON.stringify([buildSheetRow()]),
+      });
+
+      assert.equal(res.status, 200);
+    });
+
+    it("segredo errado → 401 e nada é salvo", async () => {
+      const res = await sendSheet(testApp.baseUrl, buildSheetRow(), "segredo-errado");
 
       assert.equal(res.status, 401);
       assert.equal(await Sales.countDocuments(), 0);
     });
 
-    it("hash do segredo sem o pepper → 401", async () => {
-      const hashWithoutPepper = await bcrypt.hash(process.env.WEBHOOK_SECRET, 4);
-
-      const res = await sendSheet(testApp.baseUrl, buildSheetRow(), hashWithoutPepper);
-
-      assert.equal(res.status, 401);
-    });
-
-    it("hash de outro segredo → 401", async () => {
-      const wrongHash = await bcrypt.hash(`outro-segredo${process.env.WEBHOOK_CRYPTO_PEPPER}`, 4);
-
-      const res = await sendSheet(testApp.baseUrl, buildSheetRow(), wrongHash);
+    it("segredo com um caractere a mais → 401", async () => {
+      const res = await sendSheet(testApp.baseUrl, buildSheetRow(), `${process.env.WEBHOOK_SECRET}x`);
 
       assert.equal(res.status, 401);
     });
@@ -115,54 +106,20 @@ describe("Planilha (POST /sales/webhook/sheet)", () => {
       assert.equal(await Sales.countDocuments(), 0);
     });
 
-    it("a resposta de 401 não devolve o segredo nem o pepper", async () => {
+    it("a resposta de 401 não devolve o segredo", async () => {
       const res = await sendSheet(testApp.baseUrl, buildSheetRow(), "qualquer-coisa");
       const body = await res.text();
 
       assert.equal(body.includes(process.env.WEBHOOK_SECRET), false);
-      assert.equal(body.includes(process.env.WEBHOOK_CRYPTO_PEPPER), false);
     });
 
-    for (const name of ["WEBHOOK_SECRET", "WEBHOOK_CRYPTO_PEPPER"]) {
-      it(`${name} ausente no servidor → recusa até o hash que antes era aceito`, async () => {
-        const validHash = await getWebhookHash();
+    it("WEBHOOK_SECRET ausente no servidor → recusa tudo", async () => {
+      const validSecret = process.env.WEBHOOK_SECRET;
 
-        await withEnv(name, undefined, async () => {
-          const res = await sendSheet(testApp.baseUrl, buildSheetRow(), validHash);
-          assert.equal(res.status, 401);
-        });
-      });
-    }
-
-    it("pepper trocado no servidor → o hash antigo para de valer (precisa gerar outro)", async () => {
-      const oldHash = await getWebhookHash();
-
-      await withEnv("WEBHOOK_CRYPTO_PEPPER", "pepper-novo", async () => {
-        const res = await sendSheet(testApp.baseUrl, buildSheetRow(), oldHash);
+      await withEnv("WEBHOOK_SECRET", undefined, async () => {
+        const res = await sendSheet(testApp.baseUrl, buildSheetRow(), validSecret);
         assert.equal(res.status, 401);
       });
-    });
-
-    it("mesmo hash nas próximas requisições → o bcrypt roda uma vez só", async () => {
-      const compareMock = mock.method(bcrypt, "compare");
-
-      await sendSheet(testApp.baseUrl, buildSheetRow({ id: "venda-1" }));
-      await sendSheet(testApp.baseUrl, buildSheetRow({ id: "venda-2" }));
-      await sendSheet(testApp.baseUrl, buildSheetRow({ id: "venda-3" }));
-
-      assert.equal(compareMock.mock.callCount(), 1);
-      assert.equal(await Sales.countDocuments(), 3);
-      compareMock.mock.restore();
-    });
-
-    it("valor que não é hash bcrypt → recusado sem rodar o bcrypt", async () => {
-      const compareMock = mock.method(bcrypt, "compare");
-
-      const res = await sendSheet(testApp.baseUrl, buildSheetRow(), "nao-e-um-hash");
-
-      assert.equal(res.status, 401);
-      assert.equal(compareMock.mock.callCount(), 0);
-      compareMock.mock.restore();
     });
   });
 

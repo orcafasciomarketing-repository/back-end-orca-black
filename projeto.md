@@ -63,8 +63,7 @@ Devem existir no .env local e nas variáveis de ambiente do Render.
 
 Variável Uso
 WEBHOOK_SECRET Segredo do envio da planilha. Nunca logar. Sem ela, o backend recusa todos os envios.
-WEBHOOK_CRYPTO_PEPPER Pepper somado ao segredo antes do hash. Nunca logar. Sem ela, o backend recusa todos os envios.
-O Apps Script não manda o segredo: manda o hash bcrypt de (WEBHOOK_SECRET + WEBHOOK_CRYPTO_PEPPER), gerado com `node crypto.js` e guardado nas Propriedades do script. Se só o segredo vazar, ainda falta o pepper para gerar um hash aceito. Trocar o segredo ou o pepper exige gerar o hash de novo e atualizar a planilha.
+O Apps Script manda o mesmo valor do WEBHOOK_SECRET, guardado nas Propriedades do script. Trocar o segredo exige atualizar também a planilha.
 POINTS_PER_SALE Pontos por venda do tipo sales (definido: 2).
 POINTS_PER_FARM Pontos por venda do tipo farm (definido: 1).
 POINTS_PER_PASSAGE Pontos por pessoa da passagem (definido: 1).
@@ -132,9 +131,9 @@ RN-40: O front envia os erros das TVs para POST /logs (pública, 60 por minuto p
 5.1 Apps Script (na planilha)
 Acionador "Ao editar" (aoEditarPlanilha): envia as linhas editadas que estão "Concluída" ou que já têm "Id da venda". Gera o "Id da venda" (UUID) na primeira vez e grava na planilha.
 Acionador de tempo a cada 10 min (sincronizarTudo): reenvia a planilha inteira (rede de segurança se o backend estava fora do ar).
-Envia em lotes de 50 linhas, como lista JSON, com "Atualizado em" (momento do envio) e o header webhook_secret com o hash (Propriedades do script).
+Envia em lotes de 50 linhas, como lista JSON, com "Atualizado em" (momento do envio) e o header webhook_secret com o segredo (Propriedades do script).
 5.2 Controller (sheetSaleEntry)
-Header webhook_secret conferido com bcrypt.compare(WEBHOOK_SECRET + WEBHOOK_CRYPTO_PEPPER, header) (shared/webhookSecretService.js). Valor que não tem formato de hash bcrypt é recusado sem rodar o bcrypt. O último hash aceito fica em memória para as próximas requisições não pagarem os ~250 ms do bcrypt. Segredo ou pepper ausentes no servidor, ou hash que não bate → 401 "Acesso negado".
+Header webhook_secret (ou x-webhook-secret) comparado com o WEBHOOK_SECRET usando timingSafeEqual (shared/webhookSecretService.js). Segredo ausente no servidor, header ausente ou diferente → 401 "Acesso negado".
 Aceita uma lista de linhas ou uma linha solta.
 Responde 200 com o resultado de cada linha: { linha, idVenda, status: "criada" | "atualizada" | "cancelada" | "ignorada" | "erro", mensagem? }.
 Erros inesperados sobem para o middleware de erros (Express 5) → não-2xx → o Apps Script registra no log; a sincronização reenvia.
@@ -258,6 +257,6 @@ Checklist antes da campanha
 Índices únicos de vendorName (vendors) e name (sdrs) existem no banco.
 Todas as variáveis da seção 3 configuradas no Render.
 Seed executado com os nomes dos vendors e SDRs iguais aos textos usados nas colunas "Vendedor" e "Passagens" da planilha (mesma grafia, acentos e maiúsculas).
-Apps Script: URL_ENDPOINT apontando para https://<backend no Render>/sales/webhook/sheet, hash gerado por `node crypto.js` na propriedade WEBHOOK_SECRET do script, acionadores "Ao editar" (aoEditarPlanilha) e "A cada 10 minutos" (sincronizarTudo) criados.
+Apps Script: URL_ENDPOINT apontando para https://<backend no Render>/sales/webhook/sheet, mesmo valor do WEBHOOK_SECRET do backend na propriedade WEBHOOK_SECRET do script, acionadores "Ao editar" (aoEditarPlanilha) e "A cada 10 minutos" (sincronizarTudo) criados.
 Coluna "Id da venda" oculta ou protegida na planilha.
 Nenhum log imprime o WEBHOOK_SECRET.

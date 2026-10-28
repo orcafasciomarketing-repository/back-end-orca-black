@@ -17,10 +17,6 @@ describe("Configuração do .env", { skip: !hasEnvFile && "sem arquivo .env" }, 
     assert.ok(env.WEBHOOK_SECRET, "WEBHOOK_SECRET vazio");
   });
 
-  it("WEBHOOK_CRYPTO_PEPPER está preenchido (sem ele o backend recusa a planilha)", () => {
-    assert.ok(env.WEBHOOK_CRYPTO_PEPPER, "WEBHOOK_CRYPTO_PEPPER vazio");
-  });
-
   it("BLACK_FRIDAY_GOAL é um número maior que zero", () => {
     assert.ok(Number(env.BLACK_FRIDAY_GOAL) > 0, "BLACK_FRIDAY_GOAL vazio ou inválido");
   });

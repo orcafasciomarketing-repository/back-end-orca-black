@@ -75,7 +75,7 @@ const seedVendorData = [
     vendorName: "Brenda Florêncio",
     rdUserId: "69a598336480fa0016aa1961",
     job: "B2B Venda",
-    teamName: "Sem Freio",
+    teamName: "Sem freio",
   },
   {
     vendorName: "Victoria Amaral",
@@ -186,34 +186,61 @@ const seedSdrData = [
   },
 ];
 
-async function createTeams(data) {
+// Primeira vez (banco vazio): cadastra times, vendedores e sdr.
+// Banco já cadastrado: só atualiza as imagens. Nunca apaga nem recria ninguém,
+// senão os _id mudam e as vendas perdem o vínculo com quem vendeu
+async function runSeed(data) {
   try {
     await mongoose.connect(MONGO_URI);
 
-    await Teams.deleteMany({});
-    await Vendors.deleteMany({});
-    await SDR.deleteMany({});
-
-    console.log(
-      "Conexão criada e tabela do time, dos vendedores e sdr limpas com sucesso",
-    );
-
-    const teams = await Teams.insertMany(data);
-    for (const team of teams) {
-      const filteredVendor = seedVendorData.filter(
-        (item) => item.teamName === team.name,
-      );
-      const filteredSdr = seedSdrData.filter(
-        (item) => item.teamName === team.name,
-      );
-      await createVendorBase(team._id, filteredVendor);
-      await createSdrBase(team._id, filteredSdr);
+    const teamsCount = await Teams.countDocuments();
+    if (teamsCount > 0) {
+      await updateImages(data);
+      console.log("Banco já cadastrado: só as imagens foram atualizadas");
+      return;
     }
+
+    await createTeams(data);
+    console.log("Times, vendedores e sdr cadastrados com sucesso");
   } catch (err) {
     console.log(`Error: ${err}`);
+    // Sai com erro: se o seed rodar no build do Render, o deploy falha em vez de seguir
+    process.exitCode = 1;
   } finally {
     mongoose.connection.close();
     console.log("Conexão fechada.");
+  }
+}
+
+async function updateImages(teams) {
+  for (const team of teams) {
+    await updateImage(Teams, { name: team.name }, team.imageUrl);
+  }
+  for (const vendor of seedVendorData) {
+    await updateImage(Vendors, { vendorName: vendor.vendorName }, vendor.imageUrl);
+  }
+  for (const sdr of seedSdrData) {
+    await updateImage(SDR, { name: sdr.name }, sdr.imageUrl);
+  }
+}
+
+// Sem imagem no seed, não mexe (não apaga a que já está no banco)
+async function updateImage(model, filter, imageUrl) {
+  if (!imageUrl) return;
+  await model.updateOne(filter, { $set: { imageUrl } });
+}
+
+async function createTeams(data) {
+  const teams = await Teams.insertMany(data);
+  for (const team of teams) {
+    const filteredVendor = seedVendorData.filter(
+      (item) => item.teamName === team.name,
+    );
+    const filteredSdr = seedSdrData.filter(
+      (item) => item.teamName === team.name,
+    );
+    await createVendorBase(team._id, filteredVendor);
+    await createSdrBase(team._id, filteredSdr);
   }
 }
 
@@ -238,4 +265,4 @@ async function createSdrBase(teamId, sdrs) {
   await SDR.insertMany(teamSdr);
 }
 
-createTeams(seedTeamData);
+runSeed(seedTeamData);
