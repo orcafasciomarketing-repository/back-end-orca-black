@@ -1,7 +1,8 @@
 const { connectDb } = require("./config/db");
 
 const startServer = async (server) => {
-  const serverPort = process.env.SERVER_PORT;
+  // No Render a porta vem em PORT; localmente continua usando a SERVER_PORT do .env
+  const serverPort = process.env.SERVER_PORT || process.env.PORT;
   try {
     await connectDb();
     server.listen(serverPort);

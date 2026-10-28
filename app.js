@@ -34,6 +34,8 @@ app.use(
       "http://192.168.1.63:5173",
       "http://192.168.1.72:5173",
       "http://192.168.1.195:5173",
+      // Endereço do front publicado (ex.: https://seu-front.onrender.com)
+      ...(process.env.FRONT_URL ? [process.env.FRONT_URL] : []),
     ],
     methods: ["GET", "POST", "DELETE", "PATCH", "PUT", "OPTIONS"],
     allowedHeaders: [

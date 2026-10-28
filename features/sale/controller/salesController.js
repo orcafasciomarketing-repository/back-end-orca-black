@@ -38,7 +38,9 @@ exports.getSalesByVendor = async(req, res, next) =>{
 
 exports.sheetSaleEntry = async (req, res, next) => {
   // O header traz o hash bcrypt de (segredo + pepper), não o segredo
-  const isValid = await isValidWebhookSecret(req.headers["webhook_secret"]);
+  // Aceita também "x-webhook-secret": alguns proxies descartam header com "_"
+  const receivedHash = req.headers["webhook_secret"] ?? req.headers["x-webhook-secret"];
+  const isValid = await isValidWebhookSecret(receivedHash);
   if (!isValid) {
     return res.status(401).json({ error: "Acesso negado" });
   }

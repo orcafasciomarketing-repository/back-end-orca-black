@@ -1,10 +1,14 @@
 const authService = require("../service/authService");
 
+// Em produção o front e o back ficam em domínios diferentes: o navegador só manda
+// o cookie entre domínios com sameSite "none", e "none" exige secure (https)
+const isProduction = process.env.NODE_ENV === "production";
+
 function setRefreshTokenCookie(res, refreshToken, expiration) {
   res.cookie("refreshToken", refreshToken, {
     httpOnly: true,
-    
-    sameSite: "lax",
+    secure: isProduction,
+    sameSite: isProduction ? "none" : "lax",
     expires: new Date(expiration),
   });
 }
