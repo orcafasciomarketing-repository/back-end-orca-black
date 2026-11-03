@@ -141,7 +141,7 @@ const seedSdrData = [
   {
     name: "Fernanda Prado",
     job: "B2G SDR",
-    teamName: "Sem freio"",
+    teamName: "Sem freio",
   },
   {
     name: "Julia Barrau",
@@ -217,7 +217,11 @@ async function updateImages(teams) {
     await updateImage(Teams, { name: team.name }, team.imageUrl);
   }
   for (const vendor of seedVendorData) {
-    await updateImage(Vendors, { vendorName: vendor.vendorName }, vendor.imageUrl);
+    await updateImage(
+      Vendors,
+      { vendorName: vendor.vendorName },
+      vendor.imageUrl,
+    );
   }
   for (const sdr of seedSdrData) {
     await updateImage(SDR, { name: sdr.name }, sdr.imageUrl);
