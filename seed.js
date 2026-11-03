@@ -11,15 +11,15 @@ const MONGO_URI = process.env.MONGO_URI;
 const seedTeamData = [
   {
     name: "Wizards of sales",
-    imageUrl: "http://192.168.1.22:3000/public/camiseta_amarela.png",
+    imageUrl: "https://back-end-orca-black.onrender.com/public/wizard.jpg",
   },
   {
     name: "Orçawinx",
-    imageUrl: "http://192.168.1.22:3000/public/camiseta_verde.png",
+    imageUrl: "https://back-end-orca-black.onrender.com/public/orcawinx.jpg",
   },
   {
     name: "Sem freio",
-    imageUrl: "http://192.168.1.22:3000/public/camiseta_azul.png",
+    imageUrl: "https://back-end-orca-black.onrender.com/public/sem-freio.jpg",
   },
 ];
 const seedVendorData = [
