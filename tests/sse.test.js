@@ -59,9 +59,9 @@ describe("Eventos SSE da planilha (/sales/events)", () => {
       assert.deepEqual(Object.keys(event.sale).sort(), ["_id", "funnelType"]);
       assert.equal(event.sale.funnelType, "sales");
       assert.deepEqual(event.vendor, { vendorName: "Vendor A1", job: "Executivo Venda" });
-      assert.deepEqual(event.sdrs, [{ name: "SDR B", job: "sdr" }]);
+      assert.deepEqual(event.sdrs, [{ name: "SDR B", job: "B2B SDR" }]);
       // Compatibilidade com o popup atual do front, que lê só "sdr"
-      assert.deepEqual(event.sdr, { name: "SDR B", job: "sdr" });
+      assert.deepEqual(event.sdr, { name: "SDR B", job: "B2B SDR" });
     });
 
     it("várias passagens: sdrs com todas as pessoas e sdr com a primeira", async () => {
@@ -69,10 +69,10 @@ describe("Eventos SSE da planilha (/sales/events)", () => {
 
       const [event] = events;
       assert.deepEqual(event.sdrs, [
-        { name: "Suporte C", job: "suporte" },
-        { name: "SDR B", job: "sdr" },
+        { name: "Suporte C", job: "Suporte" },
+        { name: "SDR B", job: "B2B SDR" },
       ]);
-      assert.deepEqual(event.sdr, { name: "Suporte C", job: "suporte" });
+      assert.deepEqual(event.sdr, { name: "Suporte C", job: "Suporte" });
     });
 
     it("sem passagem: evento sem as chaves sdr e sdrs", async () => {

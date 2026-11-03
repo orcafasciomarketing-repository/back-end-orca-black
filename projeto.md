@@ -64,17 +64,23 @@ Devem existir no .env local e nas variáveis de ambiente do Render.
 Variável Uso
 WEBHOOK_SECRET Segredo do envio da planilha. Nunca logar. Sem ela, o backend recusa todos os envios.
 O Apps Script manda o mesmo valor do WEBHOOK_SECRET, guardado nas Propriedades do script. Trocar o segredo exige atualizar também a planilha.
-POINTS_PER_SALE Pontos por venda do tipo sales (definido: 2).
-POINTS_PER_FARM Pontos por venda do tipo farm (definido: 1).
-POINTS_PER_PASSAGE Pontos por pessoa da passagem (definido: 1).
+POINTS_B2G_SALE Pontos por venda B2G do tipo sales (definido: 3).
+POINTS_B2G_FARM Pontos por venda B2G do tipo farm (definido: 2).
+POINTS_B2B_SALE Pontos por venda B2B do tipo sales (definido: 2).
+POINTS_B2B_FARM Pontos por venda B2B do tipo farm (definido: 1).
+POINTS_B2G_SDR Pontos por passagem de pessoa com cargo "B2G SDR" (definido: 2).
+POINTS_B2B_SDR Pontos por passagem de pessoa com cargo "B2B SDR" (definido: 1; só o Victor Batilochi).
+POINTS_CS Pontos por passagem de pessoa com cargo "CS" (definido: 1).
+POINTS_SUPORTE Pontos por passagem de pessoa com cargo "Suporte" (definido: 2).
 BLACK_FRIDAY_GOAL Meta da Black (valor em reais). Lida em config/goal.js com Number(process.env.BLACK_FRIDAY_GOAL ?? 0).
 
 As variáveis da RD (B2B_FUNIL_*, B2G_FUNIL_*, RD_PASSAGE_CUSTOM_FIELD_ID) não são mais usadas e podem ser apagadas.
 
 3.1 config/points.js
-Exporta { pointsMap }.
-pointsMap é um Map com as chaves "sales", "farm" e "passage".
-Valores convertidos com Number(process.env.X ?? 0). Padrão 0 se a variável não existir.
+Exporta { getSalePoints, getPassagePoints }.
+getSalePoints(sale): pontos pela chave "segment-funnelType" (b2g-sales, b2g-farm, b2b-sales, b2b-farm).
+getPassagePoints(sdr): pontos pelo cargo (job) da pessoa: "b2g sdr", "b2b sdr", "cs", "suporte" (comparação ignora acento, maiúscula e espaço sobrando).
+Valores convertidos com Number(process.env.X ?? 0). Padrão 0 se a variável não existir. Combinação ou cargo fora da tabela vale 0.
 O sistema deve funcionar com qualquer valor configurado. Não fixar valores no código. 4. Regras de negócio
 4.1 O que é uma venda
 RN-01: Cada linha da planilha com Status "Concluída" é uma venda ativa. A comparação ignora acento, maiúscula e espaço.
@@ -106,10 +112,10 @@ RN-20: A passagem só existe junto com a venda. Ela fica dentro do documento da 
 RN-21: As pessoas da passagem são buscadas na coleção SDR pelo name (comparação exata). Nome não cadastrado é descartado (sem log) e a venda segue com os nomes que existem. A ordem da lista é a mesma da planilha.
 RN-22: Todo envio grava a lista inteira em sdrIds ($set). Pessoa tirada da coluna sai da venda; lista vazia = sem passagem.
 4.6 Pontuação
-RN-23: Venda sales vale POINTS_PER_SALE pontos.
-RN-24: Venda farm (Renovação) vale POINTS_PER_FARM pontos.
-RN-25: Cada pessoa da passagem vale POINTS_PER_PASSAGE pontos (venda com 2 pessoas = 2 × POINTS_PER_PASSAGE).
-RN-26: Pontos não são gravados na venda. São calculados na leitura, a partir do pointsMap. Assim, se os valores mudarem, valem para todas as vendas imediatamente.
+RN-23: Pontos da venda dependem do Setor da venda e da Classificação: B2G venda = POINTS_B2G_SALE, B2G farm = POINTS_B2G_FARM, B2B venda = POINTS_B2B_SALE, B2B farm = POINTS_B2B_FARM.
+RN-24: Pontos da passagem dependem do cargo (job) da pessoa cadastrada, não do Setor da venda: B2G SDR = POINTS_B2G_SDR, B2B SDR = POINTS_B2B_SDR (só o Victor Batilochi), CS = POINTS_CS, Suporte = POINTS_SUPORTE.
+RN-25: Cada pessoa da passagem soma os pontos do próprio cargo (venda com 2 pessoas = soma dos dois cargos).
+RN-26: Pontos não são gravados na venda. São calculados na leitura, a partir de config/points.js. Assim, se os valores mudarem, valem para todas as vendas imediatamente.
 RN-27: Pontos de venda/renovação vão para o time do vendedor.
 RN-28: Os pontos de cada pessoa da passagem vão para o time dela (pode ser diferente do time do vendedor). Duas pessoas do mesmo time na mesma venda = o time ganha os pontos das duas.
 4.7 Períodos
@@ -226,17 +232,17 @@ Formato de retorno por time: { teamId, teamName, teamShirt, sales, farm, passage
 Regras de implementação:
 
 Todo time aparece, mesmo com zero pontos.
-Tabelas de consulta: id do vendor → id do time; id da pessoa da passagem → id do time.
-Pontos somados com pointsMap (nunca ++ fixo).
+Tabelas de consulta: id do vendor → id do time; id da pessoa da passagem → pessoa (time e cargo).
+Pontos somados com getSalePoints/getPassagePoints (nunca ++ fixo).
 A passagem é processada independentemente do vendor (fora do if do time do vendor).
-Os nomes das categorias no objeto do time (sales, farm, passage) são iguais às chaves do pointsMap e aos valores de funnelType.
+Os nomes das categorias de venda no objeto do time (sales, farm) são iguais aos valores de funnelType.
 RF-03 — Ranking de artilheiros (Vendas e Farmer, semanal e geral)
 Top 3 por pontos.
 Separação pelo funnelType da venda: o ranking de Vendas soma só vendas sales e o de Farmer só vendas farm. Um vendedor com os dois tipos pode aparecer nos dois rankings.
 Sem critério de desempate (empate fica na ordem que vier do banco).
 Query string: vendorDepartment=farm → farm; qualquer outro valor → sales.
 RF-04 — Ranking de SDR / passagens
-Top 3 por pontos de passagem: cada venda em que a pessoa participou da passagem vale POINTS_PER_PASSAGE para ela. Retorno por pessoa: { sdrId, name, job, teamId, points, imageUrl } (mesmo nome de campo, points, do ranking de artilheiros).
+Top 3 por pontos de passagem: cada venda em que a pessoa participou da passagem vale para ela os pontos do cargo dela. Retorno por pessoa: { sdrId, name, job, teamId, points, imageUrl } (mesmo nome de campo, points, do ranking de artilheiros).
 Inclui todos da coleção SDR (SDR + Suporte + CS).
 RF-06 — Semana passada
 Placar, artilheiros e ranking de SDR também existem para a semana passada (rotas /last-week). Usam as mesmas funções do período semanal, com a semana anterior (segunda a domingo, America/Sao_Paulo).

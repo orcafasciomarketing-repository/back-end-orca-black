@@ -20,7 +20,8 @@ const getSaoPauloMonday = () => {
   return new Date(midnightToday.getTime() - (weekDay - 1) * DAY_MS);
 };
 
-// Pontos dos testes (tests/helpers/testApp.js): sales = 3, farm = 2, passage = 1
+// Pontos dos testes (tests/helpers/testApp.js): todas as vendas são B2B (sales = 3, farm = 2);
+// passagem de SDR B (B2B SDR) = 1, de Suporte C (Suporte) = 8
 //
 // Venda | vendor | tipo  | status    | quando                               | passagem
 // s1    | A1     | sales | ativa     | segunda 00:00 (início da semana)     | -
@@ -107,11 +108,11 @@ describe("Analytics", () => {
       const data = await getData("/scoreboard");
 
       assert.deepEqual(summarizeScoreboard(data), [
+        // C: s6 + s7 (sales 3+3), passagens de Suporte C em s3 e s6 (8+8). s4 cancelada não conta
+        { teamName: "Time C", sales: 6, farm: 0, passage: 16, total: 22 },
         // A: s1 + s8 (sales 3+3), s2 + s5 (farm 2+2)
         { teamName: "Time A", sales: 6, farm: 4, passage: 0, total: 10 },
-        // C: s6 + s7 (sales 3+3), passagens de s3 e s6 (1+1). s4 cancelada não conta
-        { teamName: "Time C", sales: 6, farm: 0, passage: 2, total: 8 },
-        // B: s3 (sales 3), passagem de s2 (1)
+        // B: s3 (sales 3), passagem de SDR B em s2 (1)
         { teamName: "Time B", sales: 3, farm: 0, passage: 1, total: 4 },
       ]);
     });
@@ -132,8 +133,8 @@ describe("Analytics", () => {
       const data = await getData("/scoreboard/last-week");
 
       assert.deepEqual(summarizeScoreboard(data), [
+        { teamName: "Time C", sales: 0, farm: 0, passage: 8, total: 8 },
         { teamName: "Time B", sales: 3, farm: 0, passage: 0, total: 3 },
-        { teamName: "Time C", sales: 0, farm: 0, passage: 1, total: 1 },
         { teamName: "Time A", sales: 0, farm: 0, passage: 0, total: 0 },
       ]);
     });
@@ -194,21 +195,21 @@ describe("Analytics", () => {
       const data = await getData("/sdr-ranking");
 
       assert.deepEqual(summarizeSdr(data), [
-        { name: "Suporte C", points: 2 * TEST_POINTS.passage },
-        { name: "SDR B", points: 1 * TEST_POINTS.passage },
+        { name: "Suporte C", points: 2 * TEST_POINTS.suporte },
+        { name: "SDR B", points: 1 * TEST_POINTS.b2bSdr },
       ]);
     });
 
     it("semana", async () => {
       const data = await getData("/sdr-ranking?period=week");
 
-      assert.deepEqual(summarizeSdr(data), [{ name: "SDR B", points: TEST_POINTS.passage }]);
+      assert.deepEqual(summarizeSdr(data), [{ name: "SDR B", points: TEST_POINTS.b2bSdr }]);
     });
 
     it("semana passada (/sdr-ranking/last-week)", async () => {
       const data = await getData("/sdr-ranking/last-week");
 
-      assert.deepEqual(summarizeSdr(data), [{ name: "Suporte C", points: TEST_POINTS.passage }]);
+      assert.deepEqual(summarizeSdr(data), [{ name: "Suporte C", points: TEST_POINTS.suporte }]);
     });
   });
 });

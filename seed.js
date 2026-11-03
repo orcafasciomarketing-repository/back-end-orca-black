@@ -140,8 +140,8 @@ const seedSdrData = [
   },
   {
     name: "Fernanda Prado",
-    job: "B2B SDR",
-    teamName: "Orçawinx",
+    job: "B2G SDR",
+    teamName: "Sem freio"",
   },
   {
     name: "Julia Barrau",
@@ -155,7 +155,7 @@ const seedSdrData = [
   },
   {
     name: "Matheus Vicente",
-    job: "B2B SDR",
+    job: "B2G SDR",
     teamName: "Orçawinx",
   },
   {
@@ -171,12 +171,12 @@ const seedSdrData = [
   },
   {
     name: "Ana Clara",
-    job: "B2B SDR",
+    job: "B2G SDR",
     teamName: "Orçawinx",
   },
   {
     name: "Vinícius Pereira",
-    job: "B2B SDR",
+    job: "B2G SDR",
     teamName: "Wizards of sales",
   },
   {

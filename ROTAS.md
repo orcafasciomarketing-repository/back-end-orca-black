@@ -286,11 +286,18 @@ Todas as rotas consideram **só vendas ativas**. Valores inválidos ou ausentes 
 
 **Pontos** (calculados na hora, a partir das variáveis do `.env`):
 
-| Tipo | Variável | Vai para o time de |
+| Tipo | Variável (valor definido) | Vai para o time de |
 |---|---|---|
-| Venda (`funnelType: sales`) | `POINTS_PER_SALE` | quem vendeu |
-| Renovação (`funnelType: farm`) | `POINTS_PER_FARM` | quem vendeu |
-| Passagem (cada pessoa em `sdrIds`) | `POINTS_PER_PASSAGE` por pessoa | cada pessoa que participou da passagem |
+| Venda B2G (`segment: b2g`, `funnelType: sales`) | `POINTS_B2G_SALE` (3) | quem vendeu |
+| Farmer/Renovação B2G (`segment: b2g`, `funnelType: farm`) | `POINTS_B2G_FARM` (2) | quem vendeu |
+| Venda B2B (`segment: b2b`, `funnelType: sales`) | `POINTS_B2B_SALE` (2) | quem vendeu |
+| Farmer/Renovação B2B (`segment: b2b`, `funnelType: farm`) | `POINTS_B2B_FARM` (1) | quem vendeu |
+| Passagem de pessoa com cargo `B2G SDR` | `POINTS_B2G_SDR` (2) | a pessoa da passagem |
+| Passagem de pessoa com cargo `B2B SDR` (só o Victor Batilochi) | `POINTS_B2B_SDR` (1) | a pessoa da passagem |
+| Passagem de pessoa com cargo `CS` | `POINTS_CS` (1) | a pessoa da passagem |
+| Passagem de pessoa com cargo `Suporte` | `POINTS_SUPORTE` (2) | a pessoa da passagem |
+
+O valor da venda vem do **Setor da venda** (coluna da planilha). O da passagem vem do **cargo (`job`) da pessoa**, não do Setor da venda. Cargo fora da tabela vale 0.
 
 **Períodos:** `week` = semana atual e `last-week` = semana passada (segunda 00:00 a domingo 23:59, horário de São Paulo); `all` = campanha inteira. O filtro usa a data da venda (`realizedAt`).
 
@@ -375,7 +382,7 @@ Ranking de passagens: **top 3** por pontos de passagem. Inclui SDR, Suporte e CS
 [{ "sdrId": "...", "name": "...", "job": "...", "teamId": "...", "points": 2, "imageUrl": "..." }]
 ```
 
-`points` = quantidade de passagens × `POINTS_PER_PASSAGE`.
+`points` = soma, por venda em que a pessoa participou da passagem, dos pontos do cargo dela.
 
 ### `GET /analytics/sdr-ranking/last-week` — Pública
 

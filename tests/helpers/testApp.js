@@ -1,14 +1,29 @@
 // Pontos e meta próprios dos testes, para não depender dos valores do .env.
-// Precisam ser definidos ANTES do dotenv e dos requires do projeto: o pointsMap e a
-// meta são montados no momento em que os arquivos de config são carregados,
+// Precisam ser definidos ANTES do dotenv e dos requires do projeto: as tabelas de pontos e a
+// meta são montadas no momento em que os arquivos de config são carregados,
 // e o dotenv não sobrescreve variáveis que já existem.
-const TEST_POINTS = { sales: 3, farm: 2, passage: 1 };
+// Valores todos diferentes entre si: se o código trocar uma combinação pela outra, o teste pega
+const TEST_POINTS = {
+  b2gSale: 5,
+  b2gFarm: 4,
+  b2gSdr: 6,
+  b2bSale: 3,
+  b2bFarm: 2,
+  b2bSdr: 1,
+  cs: 7,
+  suporte: 8,
+};
 
 const TEST_GOAL = 9000;
 
-process.env.POINTS_PER_SALE = String(TEST_POINTS.sales);
-process.env.POINTS_PER_FARM = String(TEST_POINTS.farm);
-process.env.POINTS_PER_PASSAGE = String(TEST_POINTS.passage);
+process.env.POINTS_B2G_SALE = String(TEST_POINTS.b2gSale);
+process.env.POINTS_B2G_FARM = String(TEST_POINTS.b2gFarm);
+process.env.POINTS_B2G_SDR = String(TEST_POINTS.b2gSdr);
+process.env.POINTS_B2B_SALE = String(TEST_POINTS.b2bSale);
+process.env.POINTS_B2B_FARM = String(TEST_POINTS.b2bFarm);
+process.env.POINTS_B2B_SDR = String(TEST_POINTS.b2bSdr);
+process.env.POINTS_CS = String(TEST_POINTS.cs);
+process.env.POINTS_SUPORTE = String(TEST_POINTS.suporte);
 process.env.BLACK_FRIDAY_GOAL = String(TEST_GOAL);
 
 // O WEBHOOK_SECRET e o JWT_SECRET vêm do .env de verdade
@@ -67,13 +82,14 @@ exports.seedBase = async () => {
     { rdUserId: "rd-user-c1", vendorName: "Vendor C1", teamId: teamC._id, job: "Executivo Venda" },
   ]);
 
-  const [sdrB, sdrC, csB] = await SDR.create([
-    { name: "SDR B", teamId: teamB._id, job: "sdr" },
-    { name: "Suporte C", teamId: teamC._id, job: "suporte" },
-    { name: "CS B", teamId: teamB._id, job: "cs" },
+  const [sdrB, sdrC, csB, sdrG] = await SDR.create([
+    { name: "SDR B", teamId: teamB._id, job: "B2B SDR" },
+    { name: "Suporte C", teamId: teamC._id, job: "Suporte" },
+    { name: "CS B", teamId: teamB._id, job: "CS" },
+    { name: "SDR G", teamId: teamC._id, job: "B2G SDR" },
   ]);
 
-  return { teamA, teamB, teamC, vendorA1, vendorA2, vendorB1, vendorC1, sdrB, sdrC, csB };
+  return { teamA, teamB, teamC, vendorA1, vendorA2, vendorB1, vendorC1, sdrB, sdrC, csB, sdrG };
 };
 
 exports.clearDatabase = async () => {

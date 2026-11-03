@@ -10,7 +10,16 @@ const envPath = path.join(__dirname, "..", ".env");
 const hasEnvFile = fs.existsSync(envPath);
 const env = hasEnvFile ? dotenv.parse(fs.readFileSync(envPath)) : {};
 
-const POINTS_VARS = ["POINTS_PER_SALE", "POINTS_PER_FARM", "POINTS_PER_PASSAGE"];
+const POINTS_VARS = [
+  "POINTS_B2G_SALE",
+  "POINTS_B2G_FARM",
+  "POINTS_B2G_SDR",
+  "POINTS_B2B_SALE",
+  "POINTS_B2B_FARM",
+  "POINTS_B2B_SDR",
+  "POINTS_CS",
+  "POINTS_SUPORTE",
+];
 
 describe("Configuração do .env", { skip: !hasEnvFile && "sem arquivo .env" }, () => {
   it("WEBHOOK_SECRET está preenchido", () => {

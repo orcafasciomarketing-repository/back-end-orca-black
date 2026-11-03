@@ -379,16 +379,16 @@ describe("Planilha (POST /sales/webhook/sheet)", () => {
     it("pessoas de times diferentes → cada time ganha os pontos da sua pessoa", async () => {
       await sendSheet(testApp.baseUrl, buildSheetRow({ passages: "SDR B, Suporte C" }));
 
-      assert.equal((await getScoreboardTeam("Time A")).sales, TEST_POINTS.sales);
+      assert.equal((await getScoreboardTeam("Time A")).sales, TEST_POINTS.b2bSale);
       assert.equal((await getScoreboardTeam("Time A")).passage, 0);
-      assert.equal((await getScoreboardTeam("Time B")).passage, TEST_POINTS.passage);
-      assert.equal((await getScoreboardTeam("Time C")).passage, TEST_POINTS.passage);
+      assert.equal((await getScoreboardTeam("Time B")).passage, TEST_POINTS.b2bSdr);
+      assert.equal((await getScoreboardTeam("Time C")).passage, TEST_POINTS.suporte);
     });
 
     it("duas pessoas do mesmo time → o time ganha os pontos das duas", async () => {
       await sendSheet(testApp.baseUrl, buildSheetRow({ passages: "SDR B, CS B" }));
 
-      assert.equal((await getScoreboardTeam("Time B")).passage, 2 * TEST_POINTS.passage);
+      assert.equal((await getScoreboardTeam("Time B")).passage, TEST_POINTS.b2bSdr + TEST_POINTS.cs);
     });
 
     it("venda cancelada → passagens não contam", async () => {
@@ -409,7 +409,7 @@ describe("Planilha (POST /sales/webhook/sheet)", () => {
 
     it("não deixa cadastrar dois SDRs com o mesmo nome", async () => {
       await assert.rejects(
-        SDR.create({ name: "SDR B", teamId: seed.teamA._id, job: "sdr" }),
+        SDR.create({ name: "SDR B", teamId: seed.teamA._id, job: "B2B SDR" }),
         { code: 11000 },
       );
     });
