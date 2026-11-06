@@ -49,10 +49,11 @@ exports.translateSheetRow = (row) => {
   };
 };
 
-// Campos sem os quais a venda não pode ser gravada. Devolve a lista de problemas
-exports.findSaleDataErrors = (sale) => {
+// Campos sem os quais a venda não pode ser gravada. Devolve a lista de problemas.
+// requireVendor: false só na importação, que aceita venda sem vendedor
+exports.findSaleDataErrors = (sale, { requireVendor = true } = {}) => {
   const errors = [];
-  if (!sale.vendorName) errors.push("Vendedor vazio");
+  if (requireVendor && !sale.vendorName) errors.push("Vendedor vazio");
   if (!sale.segment) errors.push("Setor precisa ser B2B ou B2G");
   if (!Number.isFinite(sale.value) || sale.value < 0) errors.push("Valor da venda inválido");
   if (!sale.realizedAt) errors.push("Data da venda inválida");

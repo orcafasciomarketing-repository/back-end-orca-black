@@ -121,3 +121,39 @@ exports.cancelByDealId = async (rdDealId, rdUpdatedAt) => {
     { returnDocument: "after" },
   );
 };
+
+// ===== Importação (vendas enviadas pelo admin, fora da planilha) =====
+
+// Quantidade e soma das vendas importadas hoje (a prévia compara com o arquivo novo)
+exports.summarizeImported = async () => {
+  const [result] = await Sales.aggregate([
+    { $match: { source: "importacao" } },
+    { $group: { _id: null, count: { $sum: 1 }, total: { $sum: "$value" } } },
+  ]);
+  return { count: result?.count ?? 0, total: result?.total ?? 0 };
+};
+
+// Vendas da planilha (as antigas não têm source) para avisar de venda duplicada
+exports.findSheetSalesForDuplicates = async () => {
+  return await Sales.find(
+    { source: { $ne: "importacao" }, dealStatus: "ativa" },
+    { rdDealId: 1, rdDealName: 1, value: 1, realizedAt: 1 },
+  ).lean();
+};
+
+exports.insertImported = async (sales) => {
+  return await Sales.insertMany(sales);
+};
+
+// Remove as importadas de lotes anteriores. Nunca toca nas vendas da planilha
+exports.deleteImportedExcept = async (importId) => {
+  const result = await Sales.deleteMany({
+    source: "importacao",
+    importId: { $ne: importId },
+  });
+  return result.deletedCount;
+};
+
+exports.deleteImportBatch = async (importId) => {
+  await Sales.deleteMany({ source: "importacao", importId });
+};

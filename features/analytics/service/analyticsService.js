@@ -50,8 +50,10 @@ exports.getScoreboard = async (period) => {
   );
 
   for (const sale of sales) {
-    // Pontos de venda/renovação vão para o time do vendedor (valor pelo Setor da venda)
-    const vendorTeamId = vendorTeamMap.get(sale.vendorId.toString());
+    // Pontos de venda/renovação vão para o time do vendedor (valor pelo Setor da venda).
+    // Venda sem vendedor (importada) só conta na meta
+    const vendorTeamId =
+      sale.vendorId && vendorTeamMap.get(sale.vendorId.toString());
     if (vendorTeamId && teamPointsMap.has(vendorTeamId)) {
       teamPointsMap.get(vendorTeamId)[sale.funnelType] += getSalePoints(sale);
     }
@@ -83,7 +85,8 @@ exports.getVendorRanking = async (period, funnelType) => {
   const pointsByVendor = new Map();
 
   for (const sale of sales) {
-    if (sale.funnelType !== funnelType) continue;
+    // Venda sem vendedor (importada) não entra no ranking
+    if (sale.funnelType !== funnelType || !sale.vendorId) continue;
     const vendorId = sale.vendorId.toString();
     pointsByVendor.set(
       vendorId,

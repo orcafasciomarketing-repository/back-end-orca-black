@@ -20,6 +20,8 @@ Erros passam pelo handler global e retornam `{ "error": "mensagem" }` com o stat
 | GET | `/sales/get/:vendorId` | **Privada** (JWT) | path `vendorId` | `getSalesByVendor` → `findByVendor` |
 | GET | `/sales/events` | Pública | — | `getClient` (SSE) |
 | POST | `/sales/webhook/sheet` | Protegida por segredo | header `webhook_secret`, body | `sheetSaleEntry` → `sheetSalesProcess` |
+| POST | `/sales/import/preview` | **Privada** (JWT) | body CSV (`text/csv`) | `previewImport` → `previewImport` |
+| POST | `/sales/import` | **Privada** (JWT) | body CSV (`text/csv`) | `importSales` → `importSales` |
 | GET | `/vendor/list` | Pública | — | `getAllVendors` → `findAll` |
 | GET | `/sdr/list` | Pública | — | `getAllSdrs` → `findAll` |
 | GET | `/analytics/goal` | Pública | — | `getGoalProgress` → `getGoalProgress` |
@@ -99,7 +101,7 @@ Gera um novo access token a partir do refresh token e renova o cookie.
 
 ## Vendas — `/sales`
 
-As vendas são **somente leitura** no sistema: só são criadas, atualizadas e canceladas pela planilha (a planilha é a fonte da verdade). Correções são feitas na planilha.
+As vendas da planilha são **somente leitura** no sistema: só são criadas, atualizadas e canceladas pela planilha (a planilha é a fonte da verdade). Correções são feitas na planilha. A única exceção é a importação por CSV do admin (`/sales/import`), que só mexe nas vendas importadas.
 
 ### Formato de uma venda
 
@@ -116,6 +118,7 @@ As vendas são **somente leitura** no sistema: só são criadas, atualizadas e c
   "dealStatus": "ativa",
   "realizedAt": "2026-10-09T14:07:59.436Z",
   "rdUpdatedAt": "2026-10-14T15:00:21.027Z",
+  "source": "planilha",
   "createdAt": "...",
   "updatedAt": "..."
 }
@@ -123,7 +126,8 @@ As vendas são **somente leitura** no sistema: só são criadas, atualizadas e c
 
 | Campo | Descrição |
 |---|---|
-| `vendorId` / `sdrIds` | Nas rotas de `/sales` vêm **populados** (objeto do vendedor e lista de objetos das pessoas da passagem). `sdrIds` é uma lista: vazia quando a venda não teve passagem, com uma ou mais pessoas quando teve. |
+| `vendorId` / `sdrIds` | Nas rotas de `/sales` vêm **populados** (objeto do vendedor e lista de objetos das pessoas da passagem). `sdrIds` é uma lista: vazia quando a venda não teve passagem, com uma ou mais pessoas quando teve. `vendorId` pode ser `null` em venda importada sem vendedor (conta na meta, não pontua). |
+| `source` | `planilha` ou `importacao` (veio do CSV do admin). Vendas antigas, sem o campo, vêm como `planilha`. Vendas importadas também têm `importId` (lote) e `rdDealId` no formato `importacao:<uuid>`. |
 | `segment` | `b2b` ou `b2g`. |
 | `funnelType` | `sales` (Vendas) ou `farm` (Renovação). |
 | `dealStatus` | `ativa` ou `cancelada`. Só vendas ativas contam nas telas. |
@@ -257,6 +261,61 @@ Recebe as linhas da planilha de vendas, enviadas pelo Apps Script. Não usa JWT:
 | Envio mais antigo que o já salvo | `ignorada` | Nada |
 | `Concluída` com vendedor não cadastrado, setor inválido, valor ou data inválidos | `erro` | Nada (as outras linhas do lote seguem normalmente) |
 | Sem `Id da venda` ou `Atualizado em` | `erro` | Nada |
+
+### `POST /sales/import/preview` — Privada
+
+Lê o CSV e devolve a prévia da importação. **Nunca grava.** Arquivo com erro também volta `200`, com os erros na lista.
+
+| Parâmetro | Onde | Descrição |
+|---|---|---|
+| `Content-Type: text/csv` | header | Obrigatório (sem ele o corpo não é lido → `400 Arquivo vazio`). |
+| body | texto | Conteúdo do CSV, até 2 MB. Separado por `,` (Sheets) ou `;` (Excel). |
+
+**Colunas** (lidas pelo nome do cabeçalho, em qualquer ordem): `Setor`, `Valor da venda` e `Data da venda` obrigatórias; `Id da empresa`, `Vendedor`, `Passagens`, `Classificação` e `Status` opcionais. Mesmas regras da planilha, com estas diferenças:
+
+| Coluna | Na importação |
+|---|---|
+| `Vendedor` | Opcional. Vazio = venda sem vendedor (só conta na meta). Nome não cadastrado → erro |
+| `Passagens` | Sem vendedor e com passagem → erro. Nome não cadastrado → aviso (descartado) |
+| `Valor da venda` | Aceita `1000`, `1.234,56`, `R$ 1.234,56` |
+| `Data da venda` | Aceita `27/11/2026`, `27/11/2026 14:30` (horário de São Paulo) ou ISO |
+| `Status` | Com a coluna, só `Concluída` entra. Sem a coluna, todas as linhas entram |
+| `Id da venda` | Não é gravado (a importada ganha um id próprio). Só serve para avisar duplicada |
+
+**Resposta:**
+
+```json
+{
+  "success": true,
+  "data": {
+    "current": { "count": 40, "total": 300000 },
+    "file": { "count": 42, "total": 310000, "withVendor": 5, "withoutVendor": 37 },
+    "errors": [{ "linha": 7, "mensagem": "Data da venda inválida" }],
+    "warnings": [{ "linha": 9, "mensagem": "Passagem não cadastrada (descartada): \"Ana\"" }],
+    "duplicates": [{ "linha": 12, "mensagem": "Parece já existir na planilha (Empresa X)" }],
+    "ignored": [{ "linha": 15, "mensagem": "Status diferente de Concluída" }]
+  },
+  "message": "Prévia da importação"
+}
+```
+
+| Campo | Descrição |
+|---|---|
+| `current` | Vendas importadas hoje no banco (quantidade e soma), que serão substituídas. |
+| `file` | O que o arquivo vai gravar. |
+| `errors` | Impedem a importação. `linha` é a linha do arquivo (cabeçalho = 1). `linha: 1` = coluna obrigatória faltando. |
+| `warnings` | Não impedem. |
+| `duplicates` | Não impedem. Venda que parece já estar na planilha (mesmo `Id da venda`, ou mesma empresa, valor e dia) e contaria duas vezes. |
+| `ignored` | Linhas que não entram (Status diferente de Concluída). |
+
+### `POST /sales/import` — Privada
+
+Mesmos parâmetros e validação da prévia. **Substitui todas as vendas importadas antes** pelas do arquivo (o arquivo é a lista completa). Nunca mexe nas vendas da planilha.
+
+- Sucesso → `200` com o mesmo formato da prévia (`current` já é o resultado novo) e um `{ "type": "sale-updated" }` no SSE (sem popup).
+- Arquivo com erro → `400` com `{ "success": false, "data": <prévia>, "error": "O arquivo tem erros, nada foi importado" }`. Nada é gravado e a importação anterior continua valendo.
+- Arquivo sem nenhuma venda (só cabeçalho, ou todas ignoradas) → `400 Nenhuma venda para importar no arquivo`. Nada é apagado.
+- Arquivo vazio → `400 Arquivo vazio`. Importação em andamento → `409`.
 
 ---
 

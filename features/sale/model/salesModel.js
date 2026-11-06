@@ -10,10 +10,11 @@ const saleSchema = new Schema(
       required: true,
       unique: true,
     },
+    // Obrigatório na planilha (o adapter exige). Só a importação grava venda sem
+    // vendedor: ela conta na meta, mas não dá pontos a nenhum time
     vendorId: {
       type: Schema.Types.ObjectId,
       ref: "Vendors",
-      required: true,
     },
     value: {
       type: Number,
@@ -48,6 +49,17 @@ const saleSchema = new Schema(
       type: String,
       enum: ["ativa", "cancelada"],
       required: true,
+    },
+    // De onde a venda veio. A importação só substitui as vendas "importacao";
+    // vendas antigas, sem o campo, são da planilha
+    source: {
+      type: String,
+      enum: ["planilha", "importacao"],
+      default: "planilha",
+    },
+    // Lote da importação: as vendas novas entram antes de as antigas saírem
+    importId: {
+      type: String,
     },
   },
   { timestamps: true },

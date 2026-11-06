@@ -29,7 +29,7 @@ Instrução para quem for alterar o código (humano ou IA): Este documento descr
    Campo Tipo Regras
    rdDealId String Obrigatório, único (índice único). Coluna "Id da venda" (UUID gerado pelo Apps Script). Chave da idempotência.
    rdDealName String Opcional. Coluna "Id da empresa" (mostrado como "Negociação" no admin).
-   vendorId ObjectId → "Vendors" Obrigatório. \_id do vendor encontrado pelo nome (coluna "Vendedor").
+   vendorId ObjectId → "Vendors" Opcional no model, obrigatório na planilha. \_id do vendor encontrado pelo nome (coluna "Vendedor"). Só a importação (4.11) grava venda sem vendedor.
    value Number Obrigatório. Coluna "Valor da venda".
    sdrIds [ObjectId] → "SDR" Lista (padrão vazia). Pessoas da coluna "Passagens" (SDR, Suporte ou CS). Lista vazia = sem passagem.
    rdUpdatedAt Date Obrigatório. Coluna "Atualizado em" (momento do envio, colocado pelo Apps Script). Usado para ordenar os envios.
@@ -37,6 +37,8 @@ Instrução para quem for alterar o código (humano ou IA): Este documento descr
    funnelType String enum ["farm", "sales"] Obrigatório. Coluna "Classificação": "Renovação" = farm; vazia (venda nova) = sales.
    realizedAt Date Obrigatório. Coluna "Data da venda". Pode ser corrigida na planilha. Base dos filtros de período.
    dealStatus String enum ["ativa", "cancelada"] Obrigatório. Coluna "Status": "Concluída" = ativa; "Cancelada" (ou qualquer outro) = cancelada.
+   source String enum ["planilha", "importacao"] Padrão "planilha". De onde a venda veio. Vendas antigas, sem o campo, são da planilha.
+   importId String Só nas vendas importadas. Lote da importação (as vendas novas entram antes de as antigas saírem).
    createdAt / updatedAt Date Gerados pelo Mongoose (timestamps: true). Indicam alterações no banco.
 
 2.2 Vendor (model "Vendors")
@@ -116,7 +118,7 @@ RN-23: Pontos da venda dependem do Setor da venda e da Classificação: B2G vend
 RN-24: Pontos da passagem dependem do cargo (job) da pessoa cadastrada, não do Setor da venda: B2G SDR = POINTS_B2G_SDR, B2B SDR = POINTS_B2B_SDR (só o Victor Batilochi), CS = POINTS_CS, Suporte = POINTS_SUPORTE.
 RN-25: Cada pessoa da passagem soma os pontos do próprio cargo (venda com 2 pessoas = soma dos dois cargos).
 RN-26: Pontos não são gravados na venda. São calculados na leitura, a partir de config/points.js. Assim, se os valores mudarem, valem para todas as vendas imediatamente.
-RN-27: Pontos de venda/renovação vão para o time do vendedor.
+RN-27: Pontos de venda/renovação vão para o time do vendedor. Venda sem vendedor (importada) não dá pontos a nenhum time nem entra no ranking de artilheiros, mas conta na meta.
 RN-28: Os pontos de cada pessoa da passagem vão para o time dela (pode ser diferente do time do vendedor). Duas pessoas do mesmo time na mesma venda = o time ganha os pontos das duas.
 4.7 Períodos
 RN-29 (semanal): semana de segunda a domingo, no fuso America/Sao_Paulo (o servidor roda em UTC). O ranking "zera" na segunda apenas por filtro de data; nenhum dado é apagado.
@@ -133,7 +135,18 @@ RN-37: O evento de venda nova dispara somente quando a venda é criada (created:
 RN-38: Os dados das telas continuam vindo das consultas ao backend; o SSE só avisa as telas que é hora de buscar de novo. Quando nada muda no banco (linha cancelada que nunca foi concluída, linha com erro, envio atrasado), nenhum evento é enviado. Num lote com várias alterações, vai um único { type: "sale-updated" } (a sincronização reenvia a planilha inteira e as TVs não precisam buscar os dados N vezes); cada venda nova gera o seu evento de popup.
 RN-39: O evento leva só os campos que o popup usa (o SSE vai para todas as telas conectadas): nada de valor, empresa, id da venda ou dados internos. sdrs e sdr só existem quando a venda tem passagem.
 4.10 Logs de erro do front
-RN-40: O front envia os erros das TVs para POST /logs (pública, 60 por minuto por IP) e o admin lê em GET /logs (privada, 200 mais recentes). Logs são apagados 30 dias depois de recebidos (índice TTL em createdAt). Contrato no ERROS_E_LOGS.md do front. 5. Fluxo da planilha (implementado)
+RN-40: O front envia os erros das TVs para POST /logs (pública, 60 por minuto por IP) e o admin lê em GET /logs (privada, 200 mais recentes). Logs são apagados 30 dias depois de recebidos (índice TTL em createdAt). Contrato no ERROS_E_LOGS.md do front.
+4.11 Importação de vendas pelo admin
+RN-41: O admin (logado) importa um CSV com vendas que não estão na planilha principal (POST /sales/import). Primeiro vê a prévia (POST /sales/import/preview), que nunca grava.
+RN-42: O arquivo é a lista completa das vendas importadas: cada importação substitui todas as importadas antes (source "importacao"). Corrigir, adicionar ou remover = mudar o arquivo e importar de novo. Importar o mesmo arquivo duas vezes não duplica.
+RN-43: A importação nunca mexe nas vendas da planilha, e a sincronização da planilha nunca mexe nas importadas (o rdDealId das importadas é "importacao:<uuid>").
+RN-44: Mesmas regras da planilha (sheetRowAdapter), lendo as colunas pelo nome: Setor, Valor da venda e Data da venda obrigatórias; Id da empresa, Vendedor, Passagens e Classificação opcionais. Valor aceita formato brasileiro ("R$ 1.234,56"); data aceita dd/mm/aaaa (horário de São Paulo). CSV com "," (Sheets) ou ";" (Excel).
+RN-45: Vendedor é opcional. Com vendedor, a venda pontua como uma venda da planilha (time, artilheiros e passagens). Sem vendedor, só conta na meta. Sem vendedor e com passagem → erro.
+RN-46: Qualquer linha com erro (vendedor não cadastrado, setor, valor ou data inválidos, passagem sem vendedor) → nada é gravado e a importação anterior continua valendo. Passagem com nome não cadastrado é descartada com aviso (não impede).
+RN-47: Com coluna Status no arquivo, só "Concluída" entra (as outras linhas são listadas como ignoradas). Sem a coluna, todas as linhas entram.
+RN-48: A prévia compara a importação atual com o arquivo (quantidade e valor) e avisa vendas que parecem já existir na planilha (mesmo "Id da venda", ou mesma empresa, valor e dia), que contariam duas vezes.
+RN-49: Importação não abre popup (reenvia todas as vendas toda vez). Ao gravar, envia um único { type: "sale-updated" }.
+5. Fluxo da planilha (implementado)
 5.1 Apps Script (na planilha)
 Acionador "Ao editar" (aoEditarPlanilha): envia as linhas editadas que estão "Concluída" ou que já têm "Id da venda". Gera o "Id da venda" (UUID) na primeira vez e grava na planilha.
 Acionador de tempo a cada 10 min (sincronizarTudo): reenvia a planilha inteira (rede de segurança se o backend estava fora do ar).
@@ -247,11 +260,11 @@ Inclui todos da coleção SDR (SDR + Suporte + CS).
 RF-06 — Semana passada
 Placar, artilheiros e ranking de SDR também existem para a semana passada (rotas /last-week). Usam as mesmas funções do período semanal, com a semana anterior (segunda a domingo, America/Sao_Paulo).
 RF-05 — Tela do admin
-Somente leitura. A planilha é a fonte da verdade: vendas só são criadas, editadas e canceladas pelo envio do Apps Script; correções são feitas na planilha. Não existe criação, edição nem deleção de venda pelo sistema (as rotas POST /sales/create e PATCH /sales/update foram removidas).
+Somente leitura para as vendas da planilha. A planilha é a fonte da verdade delas: só são criadas, editadas e canceladas pelo envio do Apps Script; correções são feitas na planilha (as rotas POST /sales/create e PATCH /sales/update foram removidas). A única escrita do admin é a importação de vendas por CSV (4.11), que só mexe nas vendas importadas.
 O dash do admin mostra todas as vendas, ativas e canceladas (GET /sales/admin).
 
 RF-06b — Acesso às rotas
-Rotas do admin exigem login (authMiddleware, header Authorization: Bearer <token>): GET /sales/admin, GET /sales/get/:vendorId. Token ausente, inválido ou expirado → 401 (o front deve chamar /auth/refresh).
+Rotas do admin exigem login (authMiddleware, header Authorization: Bearer <token>): GET /sales/admin, GET /sales/get/:vendorId, POST /sales/import/preview, POST /sales/import. Token ausente, inválido ou expirado → 401 (o front deve chamar /auth/refresh).
 Rotas das telas (TVs) são públicas: /analytics/*, GET /sales/get, GET /sales/events (SSE).
 Planilha: POST /sales/webhook/sheet, protegido pelo header webhook_secret.
 Auth: /auth/register, /auth/login e /auth/refresh são públicas (decisão: cadastro aberto). 7. Pendências e problemas conhecidos no código
