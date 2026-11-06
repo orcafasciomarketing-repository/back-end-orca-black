@@ -30,6 +30,7 @@ Erros passam pelo handler global e retornam `{ "error": "mensagem" }` com o stat
 | GET | `/analytics/ranking/last-week` | Pública | query `vendorDepartment` | `getLastWeekVendorRanking` → `getVendorRanking("lastWeek")` |
 | GET | `/analytics/sdr-ranking` | Pública | query `period` | `getSdrRanking` → `getSdrRanking` |
 | GET | `/analytics/sdr-ranking/last-week` | Pública | — | `getLastWeekSdrRanking` → `getSdrRanking("lastWeek")` |
+| GET | `/analytics/forecast` | **Privada** (JWT; b2b/b2g só o setor) | query `segment` | `getForecast` → `getForecast` |
 | POST | `/logs` | Pública (limite por IP) | body | `createLog` → `create` |
 | GET | `/logs` | **Só master** | — | `getLogs` → `findLatest` |
 | GET | `/users` | **Master e admin** | — | `getUsers` → `findAll` |
@@ -461,6 +462,48 @@ Ranking de passagens: **top 3** por pontos de passagem. Inclui SDR, Suporte e CS
 ### `GET /analytics/sdr-ranking/last-week` — Pública
 
 Ranking de passagens da semana passada. Sem parâmetros. Mesmo formato de resposta do `/analytics/sdr-ranking`.
+
+### `GET /analytics/forecast` — Privada
+
+Forecast da campanha e da semana atual (modelo do `forecast_automatico_crm.pdf`). Qualquer perfil logado; **não é das TVs**. O cálculo fica em [forecastCalculator.js](features/analytics/service/forecastCalculator.js) e as datas, os feriados, os pesos e os fatores, em [config/campaign.js](config/campaign.js).
+
+| Parâmetro | Onde | Valores | Descrição |
+|---|---|---|---|
+| `segment` | query | `b2b` \| `b2g` | Só as vendas e a meta do setor (sem diferença de maiúscula). Outro valor ou vazio = todos. **b2b/b2g sempre recebem o próprio setor**, o parâmetro é ignorado. |
+
+**Regras:**
+- Campanha de **03/11 a 01/12/2026**. **Dias produtivos:** segunda a sábado, sem feriados (20/11 cai na campanha). Venda em domingo ou feriado conta no dia produtivo anterior.
+- **Hoje** conta como dia já passado (as vendas de hoje já estão no vendido). Dias restantes = dias produtivos depois de hoje até 01/12.
+- **Vendido** = todas as vendas ativas (igual ao total da meta, inclusive as de antes de 03/11). As médias usam só os dias produtivos da campanha, **contando os dias sem venda como R$ 0**.
+- **Ritmo** = média dos últimos 7 dias produtivos × 50% + dos últimos 30 × 30% + da campanha × 20%.
+- **Cenários** = vendido + ritmo × fator × dias restantes (pessimista 0,8; realista 1; otimista 1,2).
+- **Ritmo necessário** = (meta − vendido) ÷ dias restantes. **Cobertura** = ritmo ÷ necessário (não é a chance de bater a meta). **Gap** = meta − realista (negativo = acima da meta).
+- **Probabilidade** = 1 − Normal(z), com z = (meta − realista) ÷ (desvio padrão diário × √dias restantes). O desvio é dos últimos 30 dias produtivos. Com menos de 2 dias → `null`. Meta batida → 100; campanha encerrada sem bater → 0.
+- **Meta**: a do setor (`BLACK_FRIDAY_GOAL_B2B`/`_B2G`); sem ela, a total (`goalIsTotal: true`).
+- **Semana**: segunda a sábado da semana atual (no máximo até 01/12). Sem meta semanal, só os cenários.
+
+**Resposta** (valores em reais; `paceCoverage` e `probability` em %, com 2 casas):
+
+```json
+{
+  "segment": null, "goalIsTotal": true, "goal": 3000000, "today": "2026-11-06",
+  "campaign": {
+    "start": "2026-11-03", "end": "2026-12-01", "sold": 150000,
+    "productiveDays": { "elapsed": 4, "remaining": 20 },
+    "pace": { "current": 35000, "last7": 35000, "last30": 35000, "campaign": 35000,
+              "weights": { "last7": 0.5, "last30": 0.3, "campaign": 0.2 } },
+    "scenarios": { "pessimistic": 710000, "realistic": 850000, "optimistic": 990000 },
+    "requiredPace": 142500, "paceCoverage": 24.56, "gap": 2150000,
+    "dailyStdDev": 19578.9, "probability": 0
+  },
+  "week": { "start": "2026-11-02", "end": "2026-11-07", "sold": 140000, "remainingDays": 1,
+            "scenarios": { "pessimistic": 168000, "realistic": 175000, "optimistic": 182000 } },
+  "trajectory": { "days": ["2026-11-03", "..."], "actual": [40000, "...", null],
+                  "pessimistic": [null, "...", 150000, "..."], "realistic": ["..."], "optimistic": ["..."] }
+}
+```
+
+`trajectory`: um item por dia produtivo da campanha. `actual` é o vendido acumulado até hoje (depois, `null`); os cenários começam em hoje (= vendido) e vão até 01/12.
 
 ---
 

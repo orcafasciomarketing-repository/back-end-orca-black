@@ -1,4 +1,5 @@
 const AnalyticsService = require("../service/analyticsService");
+const { getRoleSegment } = require("../../../config/roles");
 
 exports.getGoalProgress = async (req, res, next) => {
   const [goalProgress, segments] = await Promise.all([
@@ -70,5 +71,18 @@ exports.getVendorRanking = async (req, res, next) => {
     success: true,
     data,
     message: "Ranking recuperado com sucesso",
+  });
+};
+
+// Precisa de login: b2b e b2g sempre recebem o próprio setor (o ?segment= é ignorado)
+exports.getForecast = async (req, res, next) => {
+  const requested = String(req.query.segment ?? "").toLowerCase();
+  const segment = getRoleSegment(req.user.role) ?? (["b2b", "b2g"].includes(requested) ? requested : null);
+
+  const data = await AnalyticsService.getForecast(segment);
+  return res.status(200).json({
+    success: true,
+    data,
+    message: "Forecast recuperado com sucesso",
   });
 };

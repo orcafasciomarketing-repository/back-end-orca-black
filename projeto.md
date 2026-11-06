@@ -156,6 +156,11 @@ RN-52: Importação e logs (tela de Erros) são só do master; trocar perfil/sen
 RN-53: O perfil é lido do banco a cada requisição (não do token): trocar o perfil ou excluir o usuário vale na hora.
 RN-54: Não existe cadastro aberto: /auth/register foi removida. Master e admin cadastram na tela Usuários (rotas /users); só o master troca perfil/senha e exclui. Ninguém muda o próprio perfil nem se exclui; ninguém vira master pela tela, e o admin não cadastra o e-mail do MASTER_EMAIL.
 RN-55: Meta por setor: B2B 2 milhões, B2G 1 milhão (GET /analytics/goal → segments). Com setor selecionado, o admin compara com a meta do setor. As TVs continuam públicas e com a meta total.
+4.13 Forecast (GET /analytics/forecast, modelo do forecast_automatico_crm.pdf)
+RN-56: Campanha de 03/11 a 01/12/2026. Dias produtivos: segunda a sábado, sem feriados (config/campaign.js). Dias sem venda contam como R$ 0 nas médias e no desvio.
+RN-57: Ritmo ponderado = 50% média dos últimos 7 dias produtivos + 30% dos últimos 30 + 20% da campanha. Cenários = vendido + ritmo × 0,8 / 1 / 1,2 × dias produtivos restantes.
+RN-58: Também devolve ritmo necessário, cobertura do ritmo (não é probabilidade), gap realista e probabilidade estatística (normal, desvio dos últimos 30 dias produtivos), além da semana atual (só cenários, sem meta).
+RN-59: Rota privada: b2b/b2g sempre recebem o próprio setor e a meta do setor. A "Previsão de fechamento" do front continua com a média simples; o forecast aparece no widget "Forecast" (Gráficos) e na tela Previsão.
 5. Fluxo da planilha (implementado)
 5.1 Apps Script (na planilha)
 Acionador "Ao editar" (aoEditarPlanilha): envia as linhas editadas que estão "Concluída" ou que já têm "Id da venda". Gera o "Id da venda" (UUID) na primeira vez e grava na planilha.

@@ -5,6 +5,7 @@ const TeamsService = require("../../teams/service/teamsService");
 
 const { getSalePoints, getPassagePoints } = require("../../../config/points.js");
 const { BLACK_FRIDAY_GOAL, SEGMENT_GOALS } = require("../../../config/goal.js");
+const { buildForecast } = require("./forecastCalculator");
 
 // Meta da Black: o front só exibe, o cálculo fica aqui (fonte única da verdade)
 exports.getGoalProgress = async () => {
@@ -162,4 +163,21 @@ exports.getSdrRanking = async (period) => {
     }))
     .sort((a, b) => b.points - a.points)
     .slice(0, 3);
+};
+
+// Forecast da campanha e da semana (cenários pessimista, realista e otimista).
+// segment: "b2b"/"b2g" usa só as vendas e a meta do setor; null = todos.
+// Sem meta do setor configurada, usa a meta total (goalIsTotal avisa)
+exports.getForecast = async (segment, now = new Date()) => {
+  const sales = await SalesService.findActiveByPeriod("all");
+  const segmentSales = segment ? sales.filter((sale) => sale.segment === segment) : sales;
+
+  const segmentGoal = segment ? SEGMENT_GOALS[segment] : 0;
+  const goal = segmentGoal > 0 ? segmentGoal : BLACK_FRIDAY_GOAL;
+
+  return {
+    segment,
+    goalIsTotal: !(segmentGoal > 0),
+    ...buildForecast({ sales: segmentSales, goal, now }),
+  };
 };
