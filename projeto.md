@@ -160,7 +160,10 @@ RN-55: Meta por setor: B2B 2 milhões, B2G 1 milhão (GET /analytics/goal → se
 RN-56: Campanha de 03/11 a 01/12/2026. Dias produtivos: segunda a sábado, sem feriados (config/campaign.js). Dias sem venda contam como R$ 0 nas médias e no desvio.
 RN-57: Ritmo ponderado = 50% média dos últimos 7 dias produtivos + 30% dos últimos 30 + 20% da campanha. Cenários = vendido + ritmo × 0,8 / 1 / 1,2 × dias produtivos restantes.
 RN-58: Também devolve ritmo necessário, cobertura do ritmo (não é probabilidade), gap realista e probabilidade estatística (normal, desvio dos últimos 30 dias produtivos), além da semana atual (só cenários, sem meta).
-RN-59: Rota privada: b2b/b2g sempre recebem o próprio setor e a meta do setor. A "Previsão de fechamento" do front continua com a média simples; o forecast aparece no widget "Forecast" (Gráficos) e na tela Previsão.
+RN-59: Rota privada: b2b/b2g sempre recebem o próprio setor e a meta do setor. O admin usa só este forecast para previsão (o antigo card "Previsão de fechamento", com média simples, saiu do front); ele aparece no widget "Forecast" (Gráficos) e na tela Previsão.
+RN-60 (meta semanal): automática, em weekGoal do forecast (campo à parte; week não mudou). Meta da semana = (meta − vendido antes da segunda) ÷ dias produtivos da segunda até 01/12 × dias produtivos da semana. Fica fixa durante a semana; null antes ou depois da campanha e sem meta.
+RN-61 (ranking por setor): /ranking, /sdr-ranking e as versões last-week aceitam ?segment=b2b|b2g e contam só as vendas do setor. Sem o parâmetro (ou inválido), nada muda: as TVs continuam iguais.
+RN-62 (histórico de pontos): GET /analytics/points-history (privada; b2b/b2g só o próprio setor) devolve os pontos de cada time por dia (venda, renovação e passagem), da primeira venda até hoje, inclusive dias sem venda.
 5. Fluxo da planilha (implementado)
 5.1 Apps Script (na planilha)
 Acionador "Ao editar" (aoEditarPlanilha): envia as linhas editadas que estão "Concluída" ou que já têm "Id da venda". Gera o "Id da venda" (UUID) na primeira vez e grava na planilha.

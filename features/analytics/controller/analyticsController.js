@@ -1,6 +1,11 @@
 const AnalyticsService = require("../service/analyticsService");
 const { getRoleSegment } = require("../../../config/roles");
 
+const toSegment = (value) => {
+  const segment = String(value ?? "").toLowerCase();
+  return ["b2b", "b2g"].includes(segment) ? segment : null;
+};
+
 exports.getGoalProgress = async (req, res, next) => {
   const [goalProgress, segments] = await Promise.all([
     AnalyticsService.getGoalProgress(),
@@ -27,7 +32,7 @@ exports.getScoreboard = async (req, res, next) => {
 exports.getSdrRanking = async (req, res, next) => {
   const { period } = req.query;
   const validPeriod = period === "week" ? "week" : "all";
-  const data = await AnalyticsService.getSdrRanking(validPeriod);
+  const data = await AnalyticsService.getSdrRanking(validPeriod, toSegment(req.query.segment));
   return res.status(200).json({
     success: true,
     data,
@@ -46,7 +51,7 @@ exports.getLastWeekScoreboard = async (req, res, next) => {
 
 exports.getLastWeekVendorRanking = async (req, res, next) => {
   const funnelType = req.query.vendorDepartment === "farm" ? "farm" : "sales";
-  const data = await AnalyticsService.getVendorRanking("lastWeek", funnelType);
+  const data = await AnalyticsService.getVendorRanking("lastWeek", funnelType, toSegment(req.query.segment));
   return res.status(200).json({
     success: true,
     data,
@@ -55,7 +60,7 @@ exports.getLastWeekVendorRanking = async (req, res, next) => {
 };
 
 exports.getLastWeekSdrRanking = async (req, res, next) => {
-  const data = await AnalyticsService.getSdrRanking("lastWeek");
+  const data = await AnalyticsService.getSdrRanking("lastWeek", toSegment(req.query.segment));
   return res.status(200).json({
     success: true,
     data,
@@ -66,7 +71,7 @@ exports.getLastWeekSdrRanking = async (req, res, next) => {
 exports.getVendorRanking = async (req, res, next) => {
   const period = req.query.period === "week" ? "week" : "all";
   const funnelType = req.query.vendorDepartment === "farm" ? "farm" : "sales";
-  const data = await AnalyticsService.getVendorRanking(period, funnelType);
+  const data = await AnalyticsService.getVendorRanking(period, funnelType, toSegment(req.query.segment));
   return res.status(200).json({
     success: true,
     data,
@@ -84,5 +89,16 @@ exports.getForecast = async (req, res, next) => {
     success: true,
     data,
     message: "Forecast recuperado com sucesso",
+  });
+};
+
+exports.getPointsHistory = async (req, res, next) => {
+  const segment = getRoleSegment(req.user.role) ?? toSegment(req.query.segment);
+
+  const data = await AnalyticsService.getPointsHistory(segment);
+  return res.status(200).json({
+    success: true,
+    data,
+    message: "Histórico de pontos recuperado com sucesso",
   });
 };

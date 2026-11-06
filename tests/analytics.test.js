@@ -228,4 +228,30 @@ describe("Analytics", () => {
       assert.deepEqual(summarizeSdr(data), [{ name: "Suporte C", points: TEST_POINTS.suporte }]);
     });
   });
+
+  describe("filtro de setor nos rankings (?segment=)", () => {
+    const summarize = (data) => data.map(({ name, points }) => ({ name, points }));
+
+    it("b2b: igual ao ranking sem filtro (todas as vendas do teste são B2B)", async () => {
+      assert.deepEqual(await getData("/ranking?segment=b2b"), await getData("/ranking"));
+      assert.deepEqual(
+        await getData("/ranking?vendorDepartment=farm&segment=B2B"),
+        await getData("/ranking?vendorDepartment=farm"),
+      );
+      assert.deepEqual(summarize(await getData("/sdr-ranking?segment=b2b")), summarize(await getData("/sdr-ranking")));
+    });
+
+    it("b2g: ninguém pontua, porque não há venda B2G", async () => {
+      assert.deepEqual(await getData("/ranking?segment=b2g"), { vendor: [] });
+      assert.deepEqual(await getData("/sdr-ranking?segment=b2g"), []);
+      assert.deepEqual(await getData("/ranking/last-week?segment=b2g"), { vendor: [] });
+      assert.deepEqual(await getData("/sdr-ranking/last-week?segment=b2g"), []);
+    });
+
+    it("setor inválido ou vazio: igual ao ranking sem filtro", async () => {
+      assert.deepEqual(await getData("/ranking?segment=xyz"), await getData("/ranking"));
+      assert.deepEqual(await getData("/sdr-ranking?period=week&segment="), await getData("/sdr-ranking?period=week"));
+    });
+  });
 });
+

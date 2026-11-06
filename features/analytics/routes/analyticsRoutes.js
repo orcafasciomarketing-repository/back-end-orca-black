@@ -13,5 +13,6 @@ router.get("/sdr-ranking", AnalyticsController.getSdrRanking);
 router.get("/sdr-ranking/last-week", AnalyticsController.getLastWeekSdrRanking);
 // Forecast é do admin (qualquer perfil logado), não das TVs
 router.get("/forecast", authMiddleware, AnalyticsController.getForecast);
+router.get("/points-history", authMiddleware, AnalyticsController.getPointsHistory);
 
 module.exports = router;

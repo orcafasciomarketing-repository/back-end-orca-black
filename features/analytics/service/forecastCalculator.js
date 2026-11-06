@@ -82,6 +82,28 @@ const goalProbability = ({ sold, goal, realistic, stdDev, daysLeft }) => {
 };
 
 // sales: vendas ativas ({ value, realizedAt }); goal: meta do período da campanha
+const buildWeekGoal = ({ sales, goal, weekStart, weekEnd, weekSold, weekDaysLeft }) => {
+  const from = weekStart > CAMPAIGN_START_DAY ? weekStart : CAMPAIGN_START_DAY;
+  if (goal <= 0 || from > weekEnd) return null;
+
+  const daysFromWeek = productiveDaysBetween(from, CAMPAIGN_END_DAY).length;
+  const weekDays = productiveDaysBetween(from, weekEnd).length;
+  if (!daysFromWeek || !weekDays) return null;
+
+  const soldBefore = sum(sales.filter((sale) => dayKeyOf(sale.realizedAt) < weekStart).map((sale) => sale.value ?? 0));
+  const weekGoal = (Math.max(goal - soldBefore, 0) / daysFromWeek) * weekDays;
+  const remaining = Math.max(weekGoal - weekSold, 0);
+
+  return {
+    goal: roundMoney(weekGoal),
+    sold: roundMoney(weekSold),
+    percent: weekGoal > 0 ? roundPercent(weekSold / weekGoal) : null,
+    remaining: roundMoney(remaining),
+    productiveDays: weekDays,
+    requiredPace: weekDaysLeft > 0 ? roundMoney(remaining / weekDaysLeft) : null,
+  };
+};
+
 exports.buildForecast = ({ sales, goal, now = new Date() }) => {
   const today = dayKeyOf(now);
   const hasStarted = today >= CAMPAIGN_START_DAY;
@@ -169,6 +191,7 @@ exports.buildForecast = ({ sales, goal, now = new Date() }) => {
       remainingDays: weekDaysLeft,
       scenarios: buildScenarios(weekSold, pace, weekDaysLeft),
     },
+    weekGoal: buildWeekGoal({ sales, goal, weekStart, weekEnd, weekSold, weekDaysLeft }),
     trajectory: {
       days: [...elapsedDays, ...remainingDays],
       actual: [...actual, ...remainingDays.map(() => null)],

@@ -7,6 +7,18 @@ const { getSalePoints, getPassagePoints } = require("../../../config/points.js")
 const { BLACK_FRIDAY_GOAL, SEGMENT_GOALS } = require("../../../config/goal.js");
 const { buildForecast } = require("./forecastCalculator");
 
+const SAO_PAULO_OFFSET_MS = 3 * 60 * 60 * 1000;
+
+const dayKeyOf = (date) => new Date(new Date(date).getTime() - SAO_PAULO_OFFSET_MS).toISOString().slice(0, 10);
+
+const nextDay = (day) => {
+  const date = new Date(`${day}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + 1);
+  return date.toISOString().slice(0, 10);
+};
+
+const filterBySegment = (sales, segment) => (segment ? sales.filter((sale) => sale.segment === segment) : sales);
+
 // Meta da Black: o front só exibe, o cálculo fica aqui (fonte única da verdade)
 exports.getGoalProgress = async () => {
   const total = await SalesService.sumActiveValue();
@@ -94,11 +106,12 @@ exports.getScoreboard = async (period) => {
 };
 
 // funnelType: "sales" (Vendas) ou "farm" (Renovação)
-exports.getVendorRanking = async (period, funnelType) => {
-  const [vendors, sales] = await Promise.all([
+exports.getVendorRanking = async (period, funnelType, segment = null) => {
+  const [vendors, periodSales] = await Promise.all([
     VendorsService.findAll(),
     SalesService.findActiveByPeriod(period),
   ]);
+  const sales = filterBySegment(periodSales, segment);
 
   const pointsByVendor = new Map();
 
@@ -130,11 +143,12 @@ exports.getVendorRanking = async (period, funnelType) => {
 };
 
 // Pontos de passagem: cada pessoa da passagem ganha, por venda, os pontos do cargo dela
-exports.getSdrRanking = async (period) => {
-  const [sdrs, sales] = await Promise.all([
+exports.getSdrRanking = async (period, segment = null) => {
+  const [sdrs, periodSales] = await Promise.all([
     SdrService.findAll(),
     SalesService.findActiveByPeriod(period),
   ]);
+  const sales = filterBySegment(periodSales, segment);
 
   const sdrMap = new Map(sdrs.map((sdr) => [sdr._id.toString(), sdr]));
   const pointsBySdr = new Map();
@@ -179,5 +193,65 @@ exports.getForecast = async (segment, now = new Date()) => {
     segment,
     goalIsTotal: !(segmentGoal > 0),
     ...buildForecast({ sales: segmentSales, goal, now }),
+  };
+};
+
+exports.getPointsHistory = async (segment = null, now = new Date()) => {
+  const [teams, vendors, sdrs, allSales] = await Promise.all([
+    TeamsService.findAll(),
+    VendorsService.findAll(),
+    SdrService.findAll(),
+    SalesService.findActiveByPeriod("all"),
+  ]);
+  const sales = filterBySegment(allSales, segment);
+
+  const today = dayKeyOf(now);
+  const saleDays = sales.map((sale) => dayKeyOf(sale.realizedAt)).filter((day) => day <= today);
+  const firstDay = saleDays.sort()[0];
+
+  const days = [];
+  for (let day = firstDay; firstDay && day <= today; day = nextDay(day)) {
+    days.push(day);
+  }
+  const dayIndex = new Map(days.map((day, index) => [day, index]));
+  const zeros = () => days.map(() => 0);
+
+  const vendorTeamMap = new Map(vendors.map((vendor) => [vendor._id.toString(), vendor.teamId.toString()]));
+  const sdrMap = new Map(sdrs.map((sdr) => [sdr._id.toString(), sdr]));
+  const teamMap = new Map(
+    teams.map((team) => [
+      team._id.toString(),
+      { teamId: team._id, teamName: team.name, teamShirt: team.imageUrl, sales: zeros(), farm: zeros(), passage: zeros() },
+    ]),
+  );
+
+  for (const sale of sales) {
+    const index = dayIndex.get(dayKeyOf(sale.realizedAt));
+    if (index === undefined) continue;
+
+    const vendorTeam = sale.vendorId && teamMap.get(vendorTeamMap.get(sale.vendorId.toString()));
+    if (vendorTeam) {
+      vendorTeam[sale.funnelType][index] += getSalePoints(sale);
+    }
+
+    for (const sdrId of sale.sdrIds) {
+      const sdr = sdrMap.get(sdrId.toString());
+      const sdrTeam = sdr && teamMap.get(sdr.teamId.toString());
+      if (sdrTeam) {
+        sdrTeam.passage[index] += getPassagePoints(sdr);
+      }
+    }
+  }
+
+  const teamsHistory = Array.from(teamMap.values()).map((team) => ({
+    ...team,
+    total: days.map((_, index) => team.sales[index] + team.farm[index] + team.passage[index]),
+  }));
+
+  return {
+    segment,
+    days,
+    teams: teamsHistory,
+    total: days.map((_, index) => teamsHistory.reduce((sum, team) => sum + team.total[index], 0)),
   };
 };

@@ -26,11 +26,12 @@ Erros passam pelo handler global e retornam `{ "error": "mensagem" }` com o stat
 | GET | `/analytics/goal` | Pública | — | `getGoalProgress` → `getGoalProgress` |
 | GET | `/analytics/scoreboard` | Pública | query `period` | `getScoreboard` → `getScoreboard` |
 | GET | `/analytics/scoreboard/last-week` | Pública | — | `getLastWeekScoreboard` → `getScoreboard("lastWeek")` |
-| GET | `/analytics/ranking` | Pública | query `period`, `vendorDepartment` | `getVendorRanking` → `getVendorRanking` |
-| GET | `/analytics/ranking/last-week` | Pública | query `vendorDepartment` | `getLastWeekVendorRanking` → `getVendorRanking("lastWeek")` |
-| GET | `/analytics/sdr-ranking` | Pública | query `period` | `getSdrRanking` → `getSdrRanking` |
-| GET | `/analytics/sdr-ranking/last-week` | Pública | — | `getLastWeekSdrRanking` → `getSdrRanking("lastWeek")` |
+| GET | `/analytics/ranking` | Pública | query `period`, `vendorDepartment`, `segment` | `getVendorRanking` → `getVendorRanking` |
+| GET | `/analytics/ranking/last-week` | Pública | query `vendorDepartment`, `segment` | `getLastWeekVendorRanking` → `getVendorRanking("lastWeek")` |
+| GET | `/analytics/sdr-ranking` | Pública | query `period`, `segment` | `getSdrRanking` → `getSdrRanking` |
+| GET | `/analytics/sdr-ranking/last-week` | Pública | query `segment` | `getLastWeekSdrRanking` → `getSdrRanking("lastWeek")` |
 | GET | `/analytics/forecast` | **Privada** (JWT; b2b/b2g só o setor) | query `segment` | `getForecast` → `getForecast` |
+| GET | `/analytics/points-history` | **Privada** (JWT; b2b/b2g só o setor) | query `segment` | `getPointsHistory` → `getPointsHistory` |
 | POST | `/logs` | Pública (limite por IP) | body | `createLog` → `create` |
 | GET | `/logs` | **Só master** | — | `getLogs` → `findLatest` |
 | GET | `/users` | **Master e admin** | — | `getUsers` → `findAll` |
@@ -367,6 +368,8 @@ Todas as rotas consideram **só vendas ativas**. Valores inválidos ou ausentes 
 
 O valor da venda vem do **Setor da venda** (coluna da planilha). O da passagem vem do **cargo (`job`) da pessoa**, não do Setor da venda. Cargo fora da tabela vale 0.
 
+**Setor nos rankings:** `/ranking`, `/sdr-ranking` e as versões `last-week` aceitam `?segment=b2b` ou `?segment=b2g` (sem diferença de maiúscula): só as vendas daquele setor entram na conta, com a mesma tabela de pontos. Sem o parâmetro, vazio ou com outro valor, a resposta é a mesma de antes (todos os setores); as TVs não mandam o parâmetro e não mudam.
+
 **Períodos:** `week` = semana atual e `last-week` = semana passada (segunda 00:00 a domingo 23:59, horário de São Paulo); `all` = campanha inteira. O filtro usa a data da venda (`realizedAt`).
 
 ### `GET /analytics/goal` — Pública
@@ -480,7 +483,8 @@ Forecast da campanha e da semana atual (modelo do `forecast_automatico_crm.pdf`)
 - **Ritmo necessário** = (meta − vendido) ÷ dias restantes. **Cobertura** = ritmo ÷ necessário (não é a chance de bater a meta). **Gap** = meta − realista (negativo = acima da meta).
 - **Probabilidade** = 1 − Normal(z), com z = (meta − realista) ÷ (desvio padrão diário × √dias restantes). O desvio é dos últimos 30 dias produtivos. Com menos de 2 dias → `null`. Meta batida → 100; campanha encerrada sem bater → 0.
 - **Meta**: a do setor (`BLACK_FRIDAY_GOAL_B2B`/`_B2G`); sem ela, a total (`goalIsTotal: true`).
-- **Semana**: segunda a sábado da semana atual (no máximo até 01/12). Sem meta semanal, só os cenários.
+- **Semana**: segunda a sábado da semana atual (no máximo até 01/12), com os cenários em `week` (o formato de `week` não mudou).
+- **Meta semanal** (`weekGoal`, campo à parte para `week` continuar igual): automática. Pega o que faltava da meta **antes da segunda-feira** (vendas da própria semana não mexem nela) ÷ dias produtivos da segunda até 01/12 × dias produtivos da semana. Ex.: meta 200 mil, vendido 10 mil até domingo, 19 dias produtivos até o fim e 6 na semana → 190.000 ÷ 19 × 6 = 60 mil. Traz `goal`, `sold` (vendido na semana), `percent`, `remaining`, `productiveDays` (da semana) e `requiredPace` (o que falta ÷ dias produtivos depois de hoje na semana; `null` sem dias). `null` antes da campanha, depois dela ou sem meta. Com a meta já batida, `goal` é 0 e `percent` é `null`.
 
 **Resposta** (valores em reais; `paceCoverage` e `probability` em %, com 2 casas):
 
@@ -504,6 +508,34 @@ Forecast da campanha e da semana atual (modelo do `forecast_automatico_crm.pdf`)
 ```
 
 `trajectory`: um item por dia produtivo da campanha. `actual` é o vendido acumulado até hoje (depois, `null`); os cenários começam em hoje (= vendido) e vão até 01/12.
+
+---
+
+### `GET /analytics/points-history` — Privada
+
+Pontos de cada time **dia a dia**, para os gráficos de evolução do admin. Qualquer perfil logado; **b2b/b2g sempre recebem o próprio setor** (como no forecast).
+
+| Parâmetro | Onde | Valores | Descrição |
+|---|---|---|---|
+| `segment` | query | `b2b` \| `b2g` | Só as vendas do setor. Outro valor ou vazio = todos. |
+
+- Só vendas ativas, com a mesma tabela de pontos do placar: venda e renovação vão para o time do vendedor, passagem para o time de cada pessoa (pelo cargo).
+- `days` vai do dia da primeira venda até hoje (horário de São Paulo), **inclusive os dias sem venda** (com 0). Sem vendas, `days` é vazio.
+- Os valores são do dia (não acumulados); o front acumula se quiser.
+
+**Resposta:**
+
+```json
+{
+  "segment": null,
+  "days": ["2026-11-03", "2026-11-04"],
+  "teams": [
+    { "teamId": "...", "teamName": "Orçawinx", "teamShirt": "...",
+      "sales": [6, 0], "farm": [0, 2], "passage": [1, 0], "total": [7, 2] }
+  ],
+  "total": [12, 5]
+}
+```
 
 ---
 
