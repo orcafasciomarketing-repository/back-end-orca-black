@@ -32,6 +32,7 @@ Erros passam pelo handler global e retornam `{ "error": "mensagem" }` com o stat
 | GET | `/analytics/sdr-ranking/last-week` | Pública | query `segment` | `getLastWeekSdrRanking` → `getSdrRanking("lastWeek")` |
 | GET | `/analytics/forecast` | **Privada** (JWT; b2b/b2g só o setor) | query `segment` | `getForecast` → `getForecast` |
 | GET | `/analytics/points-history` | **Privada** (JWT; b2b/b2g só o setor) | query `segment` | `getPointsHistory` → `getPointsHistory` |
+| GET | `/analytics/people-points` | **Privada** (JWT; b2b/b2g só o setor) | query `period`, `segment`, `from`, `to` | `getPeoplePoints` → `getPeoplePoints` |
 | POST | `/logs` | Pública (limite por IP) | body | `createLog` → `create` |
 | GET | `/logs` | **Só master** | — | `getLogs` → `findLatest` |
 | GET | `/users` | **Master e admin** | — | `getUsers` → `findAll` |
@@ -534,6 +535,39 @@ Pontos de cada time **dia a dia**, para os gráficos de evolução do admin. Qua
       "sales": [6, 0], "farm": [0, 2], "passage": [1, 0], "total": [7, 2] }
   ],
   "total": [12, 5]
+}
+```
+
+---
+
+### `GET /analytics/people-points` — Privada
+
+Pontos de **cada pessoa** (vendedores e pessoas de passagem), com o time de cada uma, para o widget "Pontos por pessoa" do admin. Qualquer perfil logado; **b2b/b2g sempre recebem o próprio setor** (como no forecast).
+
+| Parâmetro | Onde | Valores | Descrição |
+|---|---|---|---|
+| `period` | query | `all` \| `week` \| `lastWeek` | Campanha inteira (padrão), semana atual ou semana passada (mesmas semanas do placar). Outro valor = `all`. |
+| `segment` | query | `b2b` \| `b2g` | Só as vendas do setor. Outro valor ou vazio = todos. |
+| `from`, `to` | query | `AAAA-MM-DD` | Recorta pelos dias da venda (horário de São Paulo), os dois inclusive. Formato inválido = ignorado. |
+
+- Mesma tabela de pontos do placar e dos rankings: venda e renovação contam para o vendedor, passagem conta para cada pessoa da passagem (pelo cargo). Só vendas ativas.
+- **Todo mundo aparece**, inclusive quem ainda não pontuou (com 0). Somando as pessoas de um time, dá o total do time no placar.
+- `people` vem do maior para o menor `total` (empate: ordem alfabética). `kind` é `vendor` ou `sdr`.
+- `teams` (em ordem alfabética) serve para montar o seletor de time.
+
+**Resposta:**
+
+```json
+{
+  "segment": null,
+  "period": "all",
+  "from": null,
+  "to": null,
+  "teams": [{ "teamId": "...", "teamName": "Orçawinx", "teamShirt": "..." }],
+  "people": [
+    { "personId": "...", "kind": "vendor", "name": "Gustavo Rocha", "job": "B2G Sales", "imageUrl": "...",
+      "teamId": "...", "sales": 6, "farm": 0, "passage": 0, "total": 6 }
+  ]
 }
 ```
 

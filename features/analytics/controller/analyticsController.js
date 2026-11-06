@@ -102,3 +102,24 @@ exports.getPointsHistory = async (req, res, next) => {
     message: "Histórico de pontos recuperado com sucesso",
   });
 };
+
+const PEOPLE_POINTS_PERIODS = ["all", "week", "lastWeek"];
+const toDayKey = (value) => (/^\d{4}-\d{2}-\d{2}$/.test(String(value ?? "")) ? String(value) : null);
+
+// Precisa de login: b2b e b2g sempre recebem o próprio setor (o ?segment= é ignorado)
+exports.getPeoplePoints = async (req, res, next) => {
+  const segment = getRoleSegment(req.user.role) ?? toSegment(req.query.segment);
+  const period = PEOPLE_POINTS_PERIODS.includes(req.query.period) ? req.query.period : "all";
+
+  const data = await AnalyticsService.getPeoplePoints({
+    period,
+    segment,
+    from: toDayKey(req.query.from),
+    to: toDayKey(req.query.to),
+  });
+  return res.status(200).json({
+    success: true,
+    data,
+    message: "Pontos por pessoa recuperados com sucesso",
+  });
+};

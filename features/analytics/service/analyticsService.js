@@ -255,3 +255,67 @@ exports.getPointsHistory = async (segment = null, now = new Date()) => {
     total: days.map((_, index) => teamsHistory.reduce((sum, team) => sum + team.total[index], 0)),
   };
 };
+
+// Pontos de cada pessoa (vendedores e pessoas de passagem), com o time de cada uma.
+// period: "all" | "week" | "lastWeek"; from/to (AAAA-MM-DD, horário de São Paulo) recortam ainda mais.
+// Quem não pontuou também aparece, com 0
+exports.getPeoplePoints = async ({ period = "all", segment = null, from = null, to = null } = {}) => {
+  const [teams, vendors, sdrs, periodSales] = await Promise.all([
+    TeamsService.findAll(),
+    VendorsService.findAll(),
+    SdrService.findAll(),
+    SalesService.findActiveByPeriod(period),
+  ]);
+  const sales = filterBySegment(periodSales, segment).filter((sale) => {
+    const day = dayKeyOf(sale.realizedAt);
+    return (!from || day >= from) && (!to || day <= to);
+  });
+
+  const emptyPoints = () => ({ sales: 0, farm: 0, passage: 0 });
+  const vendorPoints = new Map(vendors.map((vendor) => [vendor._id.toString(), emptyPoints()]));
+  const sdrMap = new Map(sdrs.map((sdr) => [sdr._id.toString(), sdr]));
+  const sdrPoints = new Map(sdrs.map((sdr) => [sdr._id.toString(), emptyPoints()]));
+
+  for (const sale of sales) {
+    const vendor = sale.vendorId && vendorPoints.get(sale.vendorId.toString());
+    if (vendor && sale.funnelType in vendor) {
+      vendor[sale.funnelType] += getSalePoints(sale);
+    }
+
+    for (const saleSdrId of sale.sdrIds ?? []) {
+      const sdrId = saleSdrId.toString();
+      if (sdrPoints.has(sdrId)) {
+        sdrPoints.get(sdrId).passage += getPassagePoints(sdrMap.get(sdrId));
+      }
+    }
+  }
+
+  const toPerson = (kind, person, name, points) => ({
+    personId: person._id,
+    kind,
+    name,
+    job: person.job,
+    imageUrl: person.imageUrl,
+    teamId: person.teamId ?? null,
+    ...points,
+    total: points.sales + points.farm + points.passage,
+  });
+
+  const people = [
+    ...vendors.map((vendor) =>
+      toPerson("vendor", vendor, vendor.vendorName, vendorPoints.get(vendor._id.toString())),
+    ),
+    ...sdrs.map((sdr) => toPerson("sdr", sdr, sdr.name, sdrPoints.get(sdr._id.toString()))),
+  ].sort((a, b) => b.total - a.total || String(a.name).localeCompare(String(b.name), "pt-BR"));
+
+  return {
+    segment,
+    period,
+    from,
+    to,
+    teams: teams
+      .map((team) => ({ teamId: team._id, teamName: team.name, teamShirt: team.imageUrl }))
+      .sort((a, b) => String(a.teamName).localeCompare(String(b.teamName), "pt-BR")),
+    people,
+  };
+};

@@ -164,6 +164,7 @@ RN-59: Rota privada: b2b/b2g sempre recebem o próprio setor e a meta do setor. 
 RN-60 (meta semanal): automática, em weekGoal do forecast (campo à parte; week não mudou). Meta da semana = (meta − vendido antes da segunda) ÷ dias produtivos da segunda até 01/12 × dias produtivos da semana. Fica fixa durante a semana; null antes ou depois da campanha e sem meta.
 RN-61 (ranking por setor): /ranking, /sdr-ranking e as versões last-week aceitam ?segment=b2b|b2g e contam só as vendas do setor. Sem o parâmetro (ou inválido), nada muda: as TVs continuam iguais.
 RN-62 (histórico de pontos): GET /analytics/points-history (privada; b2b/b2g só o próprio setor) devolve os pontos de cada time por dia (venda, renovação e passagem), da primeira venda até hoje, inclusive dias sem venda.
+RN-63 (pontos por pessoa): GET /analytics/people-points (privada; b2b/b2g só o próprio setor) devolve todos os vendedores e pessoas de passagem com o time e os pontos de venda, renovação e passagem (quem não pontuou vem com 0). Aceita period (all/week/lastWeek) e from/to (dias em São Paulo). Usa a mesma tabela de pontos do placar: a soma das pessoas de um time é o total do time.
 5. Fluxo da planilha (implementado)
 5.1 Apps Script (na planilha)
 Acionador "Ao editar" (aoEditarPlanilha): envia as linhas editadas que estão "Concluída" ou que já têm "Id da venda". Gera o "Id da venda" (UUID) na primeira vez e grava na planilha.
