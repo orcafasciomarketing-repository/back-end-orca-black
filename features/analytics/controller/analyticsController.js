@@ -1,7 +1,11 @@
 const AnalyticsService = require("../service/analyticsService");
 
 exports.getGoalProgress = async (req, res, next) => {
-  const data = await AnalyticsService.getGoalProgress();
+  const [goalProgress, segments] = await Promise.all([
+    AnalyticsService.getGoalProgress(),
+    AnalyticsService.getSegmentGoalProgress(),
+  ]);
+  const data = { ...goalProgress, segments };
   return res.status(200).json({
     success: true,
     data,

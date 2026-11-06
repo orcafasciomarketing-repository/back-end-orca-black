@@ -1,5 +1,8 @@
+const { isValidObjectId } = require("mongoose");
+
 const { verifyAccessToken } = require("../shared/accessTokenService");
 const { UnauthorizedError } = require("../shared/errors");
+const UserService = require("../features/user/service/userService");
 
 exports.authMiddleware = async (req, res, next) => {
   try {
@@ -9,14 +12,26 @@ exports.authMiddleware = async (req, res, next) => {
       throw error;
     }
     const token = req.headers.authorization.split(" ")[1];
-    const validatedToken = verifyAccessToken(token);
+    // Token inválido ou expirado: o jsonwebtoken lança erro sem status, que viraria 500
+    let validatedToken;
+    try {
+      validatedToken = verifyAccessToken(token);
+    } catch {
+      throw UnauthorizedError("Token inválido ou expirado");
+    }
+
+    // O perfil vem do banco, não do token: trocar o perfil ou excluir o usuário
+    // vale na hora, sem esperar o token expirar
+    const user = isValidObjectId(validatedToken.userId)
+      ? await UserService.findUserById(validatedToken.userId)
+      : null;
+    if (!user) throw UnauthorizedError("Usuário não encontrado");
 
     req.token = validatedToken;
+    req.user = { id: user._id.toString(), email: user.email, role: user.role };
 
     next();
   } catch (err) {
-    // Token inválido ou expirado: o jsonwebtoken lança erro sem status, que viraria 500
-    if (!err.status) return next(UnauthorizedError("Token inválido ou expirado"));
     next(err);
   }
 };

@@ -3,12 +3,14 @@ const SalesImportService = require("../service/salesImportService");
 const {
   isValidWebhookSecret,
 } = require("../../../shared/webhookSecretService");
+const { getRoleSegment } = require("../../../config/roles");
 
 exports.getAllSales = async (req, res, next) => {
   const page = req.query.page ? Number(req.query.page) : undefined;
   const limit = req.query.limit ? Number(req.query.limit) : undefined;
 
-  const sales = await SalesService.findAll(page, limit);
+  // b2b e b2g recebem só as vendas do próprio setor (o filtro é no servidor)
+  const sales = await SalesService.findAll(page, limit, getRoleSegment(req.user.role));
   return res.status(200).json({
     success: true,
     data: sales,
@@ -31,7 +33,7 @@ exports.getWeekSales = async (req, res, next) => {
 exports.getSalesByVendor = async (req, res, next) => {
   const { vendorId } = req.params;
 
-  const vendorSales = await SalesService.findByVendor(vendorId);
+  const vendorSales = await SalesService.findByVendor(vendorId, getRoleSegment(req.user.role));
   return res.status(200).json({
     success: true,
     data: vendorSales,

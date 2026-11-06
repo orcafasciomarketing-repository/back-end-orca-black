@@ -16,6 +16,10 @@ exports.UnauthorizedError = (message = "Acesso negado") => {
   return createErrorObject(message, 401);
 };
 
+exports.ForbiddenError = (message = "Sem permissão para acessar") => {
+  return createErrorObject(message, 403);
+};
+
 exports.TokenExpiredError = (message = "Token expirado") => {
   return createErrorObject(message, 401);
 };

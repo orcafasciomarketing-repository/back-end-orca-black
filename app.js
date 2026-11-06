@@ -9,6 +9,7 @@ const analyticsRoutes = require("./features/analytics/routes/analyticsRoutes");
 const vendorRoutes = require("./features/vendors/routes/vendorRoutes");
 const sdrRoutes = require("./features/sdr/routes/sdrRoutes");
 const logsRoutes = require("./features/logs/routes/logsRoutes");
+const userRoutes = require("./features/user/routes/userRoutes");
 
 const app = express();
 
@@ -54,6 +55,7 @@ app.use("/vendor", vendorRoutes);
 app.use("/sdr", sdrRoutes);
 app.use("/analytics", analyticsRoutes);
 app.use("/logs", logsRoutes);
+app.use("/users", userRoutes);
 
 app.use((err, req, res, next) => {
   const status = err.status || 500;

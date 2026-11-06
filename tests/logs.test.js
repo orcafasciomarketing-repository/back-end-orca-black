@@ -1,10 +1,9 @@
 const { describe, it, before, after, beforeEach } = require("node:test");
 const assert = require("node:assert/strict");
 
-const { startTestApp } = require("./helpers/testApp");
+const { startTestApp, createUserToken } = require("./helpers/testApp");
 
 const Logs = require("../features/logs/model/logsModel");
-const { generateAccessToken } = require("../shared/accessTokenService");
 
 // Log no formato que o front envia (ERROS_E_LOGS.md, item 4)
 const buildLog = (overrides = {}) => ({
@@ -21,10 +20,12 @@ const buildLog = (overrides = {}) => ({
 
 describe("Logs de erro do front (/logs)", () => {
   let testApp;
+  let adminToken;
 
   before(async () => {
     testApp = await startTestApp();
     await Logs.init();
+    adminToken = await createUserToken("admin");
   });
 
   after(async () => {
@@ -45,7 +46,7 @@ describe("Logs de erro do front (/logs)", () => {
   const getLogs = async (headers = {}) => await fetch(`${testApp.baseUrl}/logs`, { headers });
 
   const adminHeaders = () => ({
-    Authorization: `Bearer ${generateAccessToken({ id: "admin-teste", email: "admin@teste.com" })}`,
+    Authorization: `Bearer ${adminToken}`,
   });
 
   describe("POST /logs (pública)", () => {

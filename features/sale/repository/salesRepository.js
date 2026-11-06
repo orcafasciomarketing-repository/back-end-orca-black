@@ -1,8 +1,10 @@
 const Sales = require("../model/salesModel");
 
-exports.findAll = async (page, limit) => {
+// segment: "b2b"/"b2g" traz só as vendas do setor; sem segment, todas
+exports.findAll = async (page, limit, segment) => {
+  const filter = segment ? { segment } : {};
   const hasPagination = page !== undefined && limit !== undefined;
-  let query = Sales.find({})
+  let query = Sales.find(filter)
     .populate("vendorId")
     .populate("sdrIds")
     .sort({ createdAt: -1 });
@@ -11,7 +13,7 @@ exports.findAll = async (page, limit) => {
   }
   return {
     data: await query,
-    total: await Sales.countDocuments({}),
+    total: await Sales.countDocuments(filter),
   };
 };
 
@@ -39,6 +41,14 @@ exports.sumActiveValue = async () => {
   return result?.total ?? 0;
 };
 
+exports.sumActiveValueBySegment = async () => {
+  const results = await Sales.aggregate([
+    { $match: { dealStatus: "ativa" } },
+    { $group: { _id: "$segment", total: { $sum: "$value" } } },
+  ]);
+  return Object.fromEntries(results.map(({ _id, total }) => [_id, total]));
+};
+
 exports.findActiveByRealizedAt = async (startDate, endDate) => {
   const filter = { dealStatus: "ativa" };
   if (startDate && endDate) {
@@ -47,8 +57,8 @@ exports.findActiveByRealizedAt = async (startDate, endDate) => {
   return await Sales.find(filter);
 };
 
-exports.findByVendor = async (vendorId) => {
-  const filter = { vendorId };
+exports.findByVendor = async (vendorId, segment) => {
+  const filter = segment ? { vendorId, segment } : { vendorId };
   const query = Sales.find(filter).populate("vendorId").populate("sdrIds");
   return {
     data: await query,

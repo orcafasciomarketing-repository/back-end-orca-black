@@ -4,6 +4,7 @@ const { EventEmitter } = require("node:events");
 
 const {
   startTestApp,
+  createUserToken,
   seedBase,
   clearDatabase,
   buildSheetRow,
@@ -12,7 +13,6 @@ const {
 } = require("./helpers/testApp");
 
 const Sales = require("../features/sale/model/salesModel");
-const { generateAccessToken } = require("../shared/accessTokenService");
 const { addClient } = require("../shared/sseManager");
 
 const HEADER = "Id da empresa,Vendedor,Passagens,Setor,Classificação,Valor da venda,Data da venda";
@@ -22,10 +22,12 @@ const buildCsv = (...lines) => [HEADER, ...lines].join("\n");
 
 describe("Importação de vendas pelo admin (POST /sales/import)", () => {
   let testApp;
+  let adminToken;
   let seed;
 
   before(async () => {
     testApp = await startTestApp();
+    adminToken = await createUserToken("admin");
   });
 
   after(async () => {
@@ -39,7 +41,7 @@ describe("Importação de vendas pelo admin (POST /sales/import)", () => {
 
   const adminHeaders = () => ({
     "Content-Type": "text/csv",
-    Authorization: `Bearer ${generateAccessToken({ id: "admin-teste", email: "admin@teste.com" })}`,
+    Authorization: `Bearer ${adminToken}`,
   });
 
   const post = async (path, csv, headers = adminHeaders()) => {

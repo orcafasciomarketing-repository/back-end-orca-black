@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 
 const {
   startTestApp,
+  createUserToken,
   seedBase,
   clearDatabase,
   buildSheetRow,
@@ -21,10 +22,12 @@ const T3 = "2026-11-27T13:10:00.300Z";
 
 describe("Planilha (POST /sales/webhook/sheet)", () => {
   let testApp;
+  let adminToken;
   let seed;
 
   before(async () => {
     testApp = await startTestApp();
+    adminToken = await createUserToken("admin");
   });
 
   after(async () => {
@@ -418,7 +421,7 @@ describe("Planilha (POST /sales/webhook/sheet)", () => {
   describe("rotas do admin (exigem login)", () => {
     // Token de admin igual ao que o login gera (assinado com o JWT_SECRET do .env)
     const adminHeaders = () => ({
-      Authorization: `Bearer ${generateAccessToken({ id: "admin-teste", email: "admin@teste.com" })}`,
+      Authorization: `Bearer ${adminToken}`,
     });
 
     for (const path of ["/sales/admin", "/sales/get/6650f0f0f0f0f0f0f0f0f0f0"]) {

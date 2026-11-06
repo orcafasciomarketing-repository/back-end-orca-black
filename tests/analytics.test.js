@@ -1,7 +1,14 @@
 const { describe, it, before, after } = require("node:test");
 const assert = require("node:assert/strict");
 
-const { startTestApp, seedBase, clearDatabase, TEST_GOAL, TEST_POINTS } = require("./helpers/testApp");
+const {
+  startTestApp,
+  seedBase,
+  clearDatabase,
+  TEST_GOAL,
+  TEST_SEGMENT_GOALS,
+  TEST_POINTS,
+} = require("./helpers/testApp");
 
 const Sales = require("../features/sale/model/salesModel");
 
@@ -96,10 +103,19 @@ describe("Analytics", () => {
 
   describe("meta da Black (/goal)", () => {
     it("devolve a meta, o total vendido (só ativas, campanha toda) e o percentual já calculado", async () => {
-      const data = await getData("/goal");
+      const { segments, ...data } = await getData("/goal");
 
       // 7 vendas ativas de 1000 (s4 cancelada não conta), meta de teste 9000
       assert.deepEqual(data, { goal: TEST_GOAL, total: 7000, percent: 77.78 });
+    });
+
+    it("traz também a meta de cada setor (todas as vendas do teste são B2B)", async () => {
+      const { segments } = await getData("/goal");
+
+      assert.deepEqual(segments, {
+        b2b: { goal: TEST_SEGMENT_GOALS.b2b, total: 7000, percent: 116.67 },
+        b2g: { goal: TEST_SEGMENT_GOALS.b2g, total: 0, percent: 0 },
+      });
     });
   });
 

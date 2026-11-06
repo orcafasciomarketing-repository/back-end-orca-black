@@ -4,7 +4,7 @@ const SdrService = require("../../sdr/service/sdrService");
 const TeamsService = require("../../teams/service/teamsService");
 
 const { getSalePoints, getPassagePoints } = require("../../../config/points.js");
-const { BLACK_FRIDAY_GOAL } = require("../../../config/goal.js");
+const { BLACK_FRIDAY_GOAL, SEGMENT_GOALS } = require("../../../config/goal.js");
 
 // Meta da Black: o front só exibe, o cálculo fica aqui (fonte única da verdade)
 exports.getGoalProgress = async () => {
@@ -17,6 +17,23 @@ exports.getGoalProgress = async () => {
       : 0;
 
   return { goal: BLACK_FRIDAY_GOAL, total, percent };
+};
+
+// Sem meta configurada, evita divisão por zero
+const calculatePercent = (total, goal) => (goal > 0 ? Math.round((total / goal) * 10000) / 100 : 0);
+
+// Meta de cada setor (filtros B2B/B2G do admin). Fica separada da meta total
+// para a resposta que a TV usa (goal, total, percent) continuar igual
+exports.getSegmentGoalProgress = async () => {
+  const totals = await SalesService.sumActiveValueBySegment();
+
+  const segments = {};
+  for (const segment of Object.keys(SEGMENT_GOALS)) {
+    const goal = SEGMENT_GOALS[segment];
+    const total = totals[segment] ?? 0;
+    segments[segment] = { goal, total, percent: calculatePercent(total, goal) };
+  }
+  return segments;
 };
 
 // period: "week", "lastWeek" ou "all" (ver SalesService.findActiveByPeriod)

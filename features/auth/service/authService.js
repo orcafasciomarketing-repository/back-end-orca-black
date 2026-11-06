@@ -4,20 +4,6 @@ const RefreshTokenService = require("../../token/service/tokenService");
 const passwordService = require("../../security/service/passwordService");
 const { NotFoundError, UnauthorizedError } = require("../../../shared/errors");
 
-exports.registerUser = async (userData) => {
-  const createdUser = await UserService.createUser(userData);
-
-  const accessToken = AccessTokenService.generateAccessToken({ id: createdUser._id, email: createdUser.email });
-  const refreshToken = await RefreshTokenService.createToken(createdUser._id);
-
-  return {
-    user: createdUser,
-    token: accessToken,
-    refreshToken: refreshToken.token,
-    expiration: refreshToken.expiresAt,
-  };
-};
-
 exports.loginUser = async (userData) => {
   const { email, password } = userData;
 

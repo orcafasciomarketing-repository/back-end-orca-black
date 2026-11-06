@@ -12,16 +12,15 @@ Erros passam pelo handler global e retornam `{ "error": "mensagem" }` com o stat
 
 | Método | Rota | Acesso | Parâmetros | Controller → Service |
 |---|---|---|---|---|
-| POST | `/auth/register` | Pública | body | `registerUser` → `registerUser` |
 | POST | `/auth/login` | Pública | body | `loginUser` → `loginUser` |
 | POST | `/auth/refresh` | Pública (exige cookie) | cookie `refreshToken` | `refreshUserTokens` → `refreshUserTokens` |
-| GET | `/sales/admin` | **Privada** (JWT) | query `page`, `limit` | `getAllSales` → `findAll` |
+| GET | `/sales/admin` | **Privada** (JWT; b2b/b2g só o setor) | query `page`, `limit` | `getAllSales` → `findAll` |
 | GET | `/sales/get` | Pública | query `page`, `limit` | `getWeekSales` → `findActiveByWeek` |
-| GET | `/sales/get/:vendorId` | **Privada** (JWT) | path `vendorId` | `getSalesByVendor` → `findByVendor` |
+| GET | `/sales/get/:vendorId` | **Privada** (JWT; b2b/b2g só o setor) | path `vendorId` | `getSalesByVendor` → `findByVendor` |
 | GET | `/sales/events` | Pública | — | `getClient` (SSE) |
 | POST | `/sales/webhook/sheet` | Protegida por segredo | header `webhook_secret`, body | `sheetSaleEntry` → `sheetSalesProcess` |
-| POST | `/sales/import/preview` | **Privada** (JWT) | body CSV (`text/csv`) | `previewImport` → `previewImport` |
-| POST | `/sales/import` | **Privada** (JWT) | body CSV (`text/csv`) | `importSales` → `importSales` |
+| POST | `/sales/import/preview` | **Só admin** | body CSV (`text/csv`) | `previewImport` → `previewImport` |
+| POST | `/sales/import` | **Só admin** | body CSV (`text/csv`) | `importSales` → `importSales` |
 | GET | `/vendor/list` | Pública | — | `getAllVendors` → `findAll` |
 | GET | `/sdr/list` | Pública | — | `getAllSdrs` → `findAll` |
 | GET | `/analytics/goal` | Pública | — | `getGoalProgress` → `getGoalProgress` |
@@ -32,7 +31,11 @@ Erros passam pelo handler global e retornam `{ "error": "mensagem" }` com o stat
 | GET | `/analytics/sdr-ranking` | Pública | query `period` | `getSdrRanking` → `getSdrRanking` |
 | GET | `/analytics/sdr-ranking/last-week` | Pública | — | `getLastWeekSdrRanking` → `getSdrRanking("lastWeek")` |
 | POST | `/logs` | Pública (limite por IP) | body | `createLog` → `create` |
-| GET | `/logs` | **Privada** (JWT) | — | `getLogs` → `findLatest` |
+| GET | `/logs` | **Só admin** | — | `getLogs` → `findLatest` |
+| GET | `/users` | **Só admin** | — | `getUsers` → `findAll` |
+| POST | `/users` | **Só admin** | body | `createUser` → `createUser` |
+| PATCH | `/users/:id` | **Só admin** | path `id`, body | `updateUser` → `updateUser` |
+| DELETE | `/users/:id` | **Só admin** | path `id` | `deleteUser` → `deleteUser` |
 | GET | `/public/*` | Pública (arquivos estáticos) | path do arquivo | — |
 
 **Rotas públicas** são as usadas pelas telas (TVs), que não fazem login. **Rotas privadas** são do admin.
@@ -45,10 +48,23 @@ Rotas **privadas** passam pelo [authMiddleware](middlewares/authMidleware.js) e 
 Authorization: Bearer <token>
 ```
 
-O `token` vem da resposta de `/auth/login`, `/auth/register` ou `/auth/refresh` e expira em **60 minutos**.
+O `token` vem da resposta de `/auth/login` ou `/auth/refresh` e expira em **60 minutos**.
 
 - Sem header → `401 Token não encontrado`
 - Token inválido ou expirado → `401 Token inválido ou expirado` (o front deve chamar `/auth/refresh` e repetir a requisição)
+- Usuário do token não existe mais (excluído) → `401 Usuário não encontrado`
+
+### Perfis
+
+O middleware busca o usuário no banco a cada requisição: o perfil vem do banco, não do token, então trocar o perfil ou excluir o usuário vale na hora.
+
+| Perfil | Vendas (`/sales/admin`, `/sales/get/:vendorId`) | Importação, logs e usuários |
+|---|---|---|
+| `admin` | todas | liberado |
+| `b2b` | só `segment: "b2b"` (o filtro é no servidor) | `403 Sem permissão para acessar` |
+| `b2g` | só `segment: "b2g"` | `403 Sem permissão para acessar` |
+
+Usuário sem o campo `role` (criado antes dos perfis) é tratado como `admin`. As rotas públicas (TVs) não mudam com o perfil.
 
 ## CORS
 
@@ -60,23 +76,11 @@ O CORS está com `credentials: true`, então o front pode enviar o cookie `refre
 
 ## Auth — `/auth`
 
-### `POST /auth/register` — Pública
-
-Cria um usuário e já devolve os tokens. Grava o cookie `refreshToken` (httpOnly).
-
-**Body** (validado por `RegisterSchema`, não aceita campos extras):
-
-| Campo | Tipo | Obrigatório | Descrição |
-|---|---|---|---|
-| `email` | string | sim | E-mail válido. É convertido para minúsculas e sem espaços. |
-| `password` | string | sim | Senha com no mínimo 6 caracteres. |
-| `passwordConfirmation` | string | sim | Precisa ser igual a `password`, senão retorna "Senhas são diferentes". |
-
-**Resposta:** `201 { user, token }`
+Não existe mais cadastro aberto (`/auth/register` foi removida → 404): quem cadastra usuário é o admin, em `POST /users`.
 
 ### `POST /auth/login` — Pública
 
-Autentica o usuário. Grava o cookie `refreshToken` (httpOnly).
+Autentica o usuário. Grava o cookie `refreshToken` (httpOnly). O `user` da resposta traz o `role` (`admin`, `b2b` ou `b2g`).
 
 **Body** (validado por `LoginSchema`, não aceita campos extras):
 
@@ -135,7 +139,7 @@ As vendas da planilha são **somente leitura** no sistema: só são criadas, atu
 
 ### `GET /sales/admin` — Privada
 
-Lista **todas** as vendas, ativas e canceladas, da mais nova para a mais antiga.
+Lista **todas** as vendas, ativas e canceladas, da mais nova para a mais antiga. Para `b2b`/`b2g`, só as vendas do setor (o `total` também).
 
 **Query** (opcionais — a paginação só é aplicada se **os dois** forem enviados):
 
@@ -156,7 +160,7 @@ Lista as vendas **ativas** da **semana atual** (segunda 00:00 até domingo 23:59
 
 ### `GET /sales/get/:vendorId` — Privada
 
-Lista as vendas de um vendedor, ativas e canceladas.
+Lista as vendas de um vendedor, ativas e canceladas. Para `b2b`/`b2g`, só as do setor.
 
 | Parâmetro | Onde | Descrição |
 |---|---|---|
@@ -262,7 +266,7 @@ Recebe as linhas da planilha de vendas, enviadas pelo Apps Script. Não usa JWT:
 | `Concluída` com vendedor não cadastrado, setor inválido, valor ou data inválidos | `erro` | Nada (as outras linhas do lote seguem normalmente) |
 | Sem `Id da venda` ou `Atualizado em` | `erro` | Nada |
 
-### `POST /sales/import/preview` — Privada
+### `POST /sales/import/preview` — Só admin
 
 Lê o CSV e devolve a prévia da importação. **Nunca grava.** Arquivo com erro também volta `200`, com os erros na lista.
 
@@ -308,7 +312,7 @@ Lê o CSV e devolve a prévia da importação. **Nunca grava.** Arquivo com erro
 | `duplicates` | Não impedem. Venda que parece já estar na planilha (mesmo `Id da venda`, ou mesma empresa, valor e dia) e contaria duas vezes. |
 | `ignored` | Linhas que não entram (Status diferente de Concluída). |
 
-### `POST /sales/import` — Privada
+### `POST /sales/import` — Só admin
 
 Mesmos parâmetros e validação da prévia. **Substitui todas as vendas importadas antes** pelas do arquivo (o arquivo é a lista completa). Nunca mexe nas vendas da planilha.
 
@@ -367,14 +371,21 @@ Retorna a meta da Black Friday e o progresso, já calculado. Sem parâmetros. O 
 **Resposta:**
 
 ```json
-{ "goal": 500000, "total": 125000, "percent": 25 }
+{
+  "goal": 3000000, "total": 750000, "percent": 25,
+  "segments": {
+    "b2b": { "goal": 2000000, "total": 500000, "percent": 25 },
+    "b2g": { "goal": 1000000, "total": 250000, "percent": 25 }
+  }
+}
 ```
 
 | Campo | Descrição |
 |---|---|
-| `goal` | Meta da Black (variável `BLACK_FRIDAY_GOAL`). |
+| `goal` | Meta total. Com `BLACK_FRIDAY_GOAL_B2B` e `BLACK_FRIDAY_GOAL_B2G` configuradas, é a soma das duas; sem elas, a `BLACK_FRIDAY_GOAL`. |
 | `total` | Soma do valor de todas as vendas ativas. |
 | `percent` | `total / goal × 100`, com 2 casas decimais. Pode passar de 100 se a meta for batida. Meta não configurada → `0`. |
+| `segments` | Meta, total e percentual de cada setor (filtros B2B/B2G do admin). Meta do setor não configurada → `goal: 0` e `percent: 0` (o front usa a meta total). A TV só usa `goal`, `total` e `percent`. |
 
 ### `GET /analytics/scoreboard` — Pública
 
@@ -474,11 +485,44 @@ As TVs não fazem login, então a rota é pública. Para evitar spam, cada IP po
 
 O horário em que o backend recebeu o log fica em `createdAt`.
 
-### `GET /logs` — Privada
+### `GET /logs` — Só admin
 
 Lista os **200 logs mais recentes**, do mais novo para o mais antigo (pelo horário de recebimento).
 
 **Resposta:** `data: [{ _id, level, message, stack, componentStack, location, url, userAgent, occurredAt, createdAt, updatedAt }]`
+
+---
+
+## Usuários — `/users` (só admin)
+
+Todas exigem login de `admin` (`b2b`/`b2g` → `403`). A senha nunca volta nas respostas.
+
+### `GET /users`
+
+**Resposta:** `data: [{ _id, email, role, createdAt, updatedAt }]`, ordenado por e-mail. Usuário antigo, sem perfil, vem como `admin`.
+
+### `POST /users`
+
+**Body** (validado por `CreateUserSchema`, não aceita campos extras):
+
+| Campo | Tipo | Obrigatório | Descrição |
+|---|---|---|---|
+| `email` | string | sim | E-mail válido. Convertido para minúsculas e sem espaços. |
+| `password` | string | sim | No mínimo 6 caracteres. |
+| `passwordConfirmation` | string | sim | Igual a `password`, senão "Senhas são diferentes". |
+| `role` | string | sim | `admin`, `b2b` ou `b2g`. |
+
+**Resposta:** `201 data: { _id, email, role }`. E-mail já cadastrado → `409 Cadastro já realizado`.
+
+### `PATCH /users/:id`
+
+**Body** (`UpdateUserSchema`): `role` e/ou `password` + `passwordConfirmation` (pelo menos um dos dois). Nova senha derruba as sessões abertas da pessoa (refresh tokens revogados).
+
+O admin não muda o próprio perfil (`400`), para nunca ficar sem admin. Usuário que não existe → `404`.
+
+### `DELETE /users/:id`
+
+Exclui e revoga as sessões. A pessoa perde o acesso na hora. O admin não se exclui (`400`). Usuário que não existe → `404`.
 
 ---
 

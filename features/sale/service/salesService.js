@@ -34,12 +34,12 @@ const getWeekRange = (weeksAgo = 0) => {
   };
 };
 
-exports.findAll = async (page, limit) => {
-  return await SalesRepository.findAll(page, limit);
+exports.findAll = async (page, limit, segment) => {
+  return await SalesRepository.findAll(page, limit, segment);
 };
 
-exports.findByVendor = async (vendorId) => {
-  return await SalesRepository.findByVendor(vendorId);
+exports.findByVendor = async (vendorId, segment) => {
+  return await SalesRepository.findByVendor(vendorId, segment);
 };
 
 // Vendas ativas da semana atual, com paginação opcional (rota /sales/get)
@@ -57,6 +57,11 @@ exports.findActiveByWeek = async (page, limit) => {
 // Soma do value de todas as vendas ativas da campanha (progresso da meta)
 exports.sumActiveValue = async () => {
   return await SalesRepository.sumActiveValue();
+};
+
+// Total vendido (só ativas) de cada setor: { b2b: 1000, b2g: 500 }
+exports.sumActiveValueBySegment = async () => {
+  return await SalesRepository.sumActiveValueBySegment();
 };
 
 // period: "week" (semana atual), "lastWeek" (semana passada) ou "all" (campanha toda)

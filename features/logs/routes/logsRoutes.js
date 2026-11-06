@@ -4,6 +4,7 @@ const router = express.Router();
 const LogsController = require("../controller/logsController");
 const { validateSchema } = require("../../../middlewares/schemaValidationMiddleware");
 const { authMiddleware } = require("../../../middlewares/authMidleware");
+const { requireAdmin } = require("../../../middlewares/roleMiddleware");
 const { rateLimit } = require("../../../middlewares/rateLimitMiddleware");
 const { CreateLogSchema } = require("../schemas/logsSchemas");
 
@@ -13,6 +14,7 @@ const { CreateLogSchema } = require("../schemas/logsSchemas");
 const createLogRateLimit = rateLimit({ windowMs: 60 * 1000, max: 60 });
 
 router.post("/", createLogRateLimit, validateSchema(CreateLogSchema), LogsController.createLog);
-router.get("/", authMiddleware, LogsController.getLogs);
+// Tela de erros: só o perfil admin
+router.get("/", authMiddleware, requireAdmin, LogsController.getLogs);
 
 module.exports = router;

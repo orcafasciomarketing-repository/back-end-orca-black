@@ -13,13 +13,6 @@ function setRefreshTokenCookie(res, refreshToken, expiration) {
   });
 }
 
-exports.registerUser = async (req, res) => {
-  const validatedData = req.data;
-  const { user, token, refreshToken, expiration } = await authService.registerUser(validatedData);
-  setRefreshTokenCookie(res, refreshToken, expiration);
-  res.status(201).json({ user, token });
-};
-
 exports.loginUser = async (req, res) => {
   const validatedData = req.data;
   const { user, token, refreshToken, expiration } = await authService.loginUser(validatedData);

@@ -1,5 +1,7 @@
 const { Schema, model } = require("mongoose");
 
+const { ROLES } = require("../../../config/roles");
+
 const UserSchema = new Schema(
   {
     email: {
@@ -13,6 +15,13 @@ const UserSchema = new Schema(
       type: String,
       required: true,
       select: false,
+    },
+    // Usuários criados antes dos perfis não têm o campo: o default faz eles
+    // continuarem admin (o mongoose aplica o default ao ler do banco)
+    role: {
+      type: String,
+      enum: ROLES,
+      default: "admin",
     },
   },
   { timestamps: true },

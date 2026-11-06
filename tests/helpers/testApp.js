@@ -14,7 +14,9 @@ const TEST_POINTS = {
   suporte: 8,
 };
 
-const TEST_GOAL = 9000;
+// Metas de setor de teste: a meta total (TEST_GOAL) é a soma das duas
+const TEST_SEGMENT_GOALS = { b2b: 6000, b2g: 3000 };
+const TEST_GOAL = TEST_SEGMENT_GOALS.b2b + TEST_SEGMENT_GOALS.b2g;
 
 process.env.POINTS_B2G_SALE = String(TEST_POINTS.b2gSale);
 process.env.POINTS_B2G_FARM = String(TEST_POINTS.b2gFarm);
@@ -25,6 +27,8 @@ process.env.POINTS_B2B_SDR = String(TEST_POINTS.b2bSdr);
 process.env.POINTS_CS = String(TEST_POINTS.cs);
 process.env.POINTS_SUPORTE = String(TEST_POINTS.suporte);
 process.env.BLACK_FRIDAY_GOAL = String(TEST_GOAL);
+process.env.BLACK_FRIDAY_GOAL_B2B = String(TEST_SEGMENT_GOALS.b2b);
+process.env.BLACK_FRIDAY_GOAL_B2G = String(TEST_SEGMENT_GOALS.b2g);
 
 // O WEBHOOK_SECRET e o JWT_SECRET vêm do .env de verdade
 require("dotenv").config({ quiet: true });
@@ -39,6 +43,8 @@ const Sales = require("../../features/sale/model/salesModel");
 const Vendors = require("../../features/vendors/model/vendorsModel");
 const SDR = require("../../features/sdr/model/sdrModel");
 const Teams = require("../../features/teams/model/teamsModel");
+const User = require("../../features/user/model/userModel");
+const { generateAccessToken } = require("../../shared/accessTokenService");
 
 // Sobe um MongoDB temporário em memória (nunca usa o MONGO_URI do .env)
 // e o app Express numa porta livre.
@@ -144,5 +150,22 @@ exports.sendSheet = async (baseUrl, rows, secret) => {
   });
 };
 
+// Cria (ou reaproveita) um usuário com o perfil e devolve o token de acesso dele,
+// igual ao que o login gera. O authMiddleware confere o usuário no banco.
+// role undefined = usuário antigo, gravado antes de existir o campo
+exports.createUserToken = async (role) => {
+  const email = `${role ?? "antigo"}@teste.com`;
+  let user = await User.findOne({ email });
+  if (!user) {
+    // Sem passar pelo hash: estes testes não fazem login com senha
+    const doc = { email, passwordHash: "hash-de-teste" };
+    if (role !== undefined) doc.role = role;
+    await User.collection.insertOne(doc);
+    user = await User.findOne({ email });
+  }
+  return generateAccessToken({ id: user._id, email: user.email });
+};
+
 exports.TEST_POINTS = TEST_POINTS;
+exports.TEST_SEGMENT_GOALS = TEST_SEGMENT_GOALS;
 exports.TEST_GOAL = TEST_GOAL;
