@@ -19,8 +19,8 @@ Erros passam pelo handler global e retornam `{ "error": "mensagem" }` com o stat
 | GET | `/sales/get/:vendorId` | **Privada** (JWT; b2b/b2g só o setor) | path `vendorId` | `getSalesByVendor` → `findByVendor` |
 | GET | `/sales/events` | Pública | — | `getClient` (SSE) |
 | POST | `/sales/webhook/sheet` | Protegida por segredo | header `webhook_secret`, body | `sheetSaleEntry` → `sheetSalesProcess` |
-| POST | `/sales/import/preview` | **Só admin** | body CSV (`text/csv`) | `previewImport` → `previewImport` |
-| POST | `/sales/import` | **Só admin** | body CSV (`text/csv`) | `importSales` → `importSales` |
+| POST | `/sales/import/preview` | **Só master** | body CSV (`text/csv`) | `previewImport` → `previewImport` |
+| POST | `/sales/import` | **Só master** | body CSV (`text/csv`) | `importSales` → `importSales` |
 | GET | `/vendor/list` | Pública | — | `getAllVendors` → `findAll` |
 | GET | `/sdr/list` | Pública | — | `getAllSdrs` → `findAll` |
 | GET | `/analytics/goal` | Pública | — | `getGoalProgress` → `getGoalProgress` |
@@ -31,11 +31,11 @@ Erros passam pelo handler global e retornam `{ "error": "mensagem" }` com o stat
 | GET | `/analytics/sdr-ranking` | Pública | query `period` | `getSdrRanking` → `getSdrRanking` |
 | GET | `/analytics/sdr-ranking/last-week` | Pública | — | `getLastWeekSdrRanking` → `getSdrRanking("lastWeek")` |
 | POST | `/logs` | Pública (limite por IP) | body | `createLog` → `create` |
-| GET | `/logs` | **Só admin** | — | `getLogs` → `findLatest` |
-| GET | `/users` | **Só admin** | — | `getUsers` → `findAll` |
-| POST | `/users` | **Só admin** | body | `createUser` → `createUser` |
-| PATCH | `/users/:id` | **Só admin** | path `id`, body | `updateUser` → `updateUser` |
-| DELETE | `/users/:id` | **Só admin** | path `id` | `deleteUser` → `deleteUser` |
+| GET | `/logs` | **Só master** | — | `getLogs` → `findLatest` |
+| GET | `/users` | **Master e admin** | — | `getUsers` → `findAll` |
+| POST | `/users` | **Master e admin** | body | `createUser` → `createUser` |
+| PATCH | `/users/:id` | **Só master** | path `id`, body | `updateUser` → `updateUser` |
+| DELETE | `/users/:id` | **Só master** | path `id` | `deleteUser` → `deleteUser` |
 | GET | `/public/*` | Pública (arquivos estáticos) | path do arquivo | — |
 
 **Rotas públicas** são as usadas pelas telas (TVs), que não fazem login. **Rotas privadas** são do admin.
@@ -58,13 +58,17 @@ O `token` vem da resposta de `/auth/login` ou `/auth/refresh` e expira em **60 m
 
 O middleware busca o usuário no banco a cada requisição: o perfil vem do banco, não do token, então trocar o perfil ou excluir o usuário vale na hora.
 
-| Perfil | Vendas (`/sales/admin`, `/sales/get/:vendorId`) | Importação, logs e usuários |
-|---|---|---|
-| `admin` | todas | liberado |
-| `b2b` | só `segment: "b2b"` (o filtro é no servidor) | `403 Sem permissão para acessar` |
-| `b2g` | só `segment: "b2g"` | `403 Sem permissão para acessar` |
+| Perfil | Vendas (`/sales/admin`, `/sales/get/:vendorId`) | Importação e logs | Ver e cadastrar usuários | Trocar perfil/senha e excluir usuários |
+|---|---|---|---|---|
+| `master` | todas | liberado | liberado | liberado |
+| `admin` | todas | `403` | liberado | `403` |
+| `b2b` | só `segment: "b2b"` (o filtro é no servidor) | `403` | `403` | `403` |
+| `b2g` | só `segment: "b2g"` | `403` | `403` | `403` |
 
-Usuário sem o campo `role` (criado antes dos perfis) é tratado como `admin`. As rotas públicas (TVs) não mudam com o perfil.
+- `master` não é gravado no banco: é o usuário com o e-mail da variável `MASTER_EMAIL` (sem diferença de maiúscula). O perfil gravado dele continua `admin`. Login, refresh e `GET /users` devolvem `role: "master"` para ele.
+- **Sem `MASTER_EMAIL` configurado, todo admin vale como master** (como era antes dos perfis), então um deploy antes de criar a variável não tranca ninguém para fora.
+- Usuário sem o campo `role` (criado antes dos perfis) é tratado como `admin`. As rotas públicas (TVs) não mudam com o perfil.
+- `403` responde `{ "error": "Sem permissão para acessar" }`.
 
 ## CORS
 
@@ -266,7 +270,7 @@ Recebe as linhas da planilha de vendas, enviadas pelo Apps Script. Não usa JWT:
 | `Concluída` com vendedor não cadastrado, setor inválido, valor ou data inválidos | `erro` | Nada (as outras linhas do lote seguem normalmente) |
 | Sem `Id da venda` ou `Atualizado em` | `erro` | Nada |
 
-### `POST /sales/import/preview` — Só admin
+### `POST /sales/import/preview` — Só master
 
 Lê o CSV e devolve a prévia da importação. **Nunca grava.** Arquivo com erro também volta `200`, com os erros na lista.
 
@@ -312,7 +316,7 @@ Lê o CSV e devolve a prévia da importação. **Nunca grava.** Arquivo com erro
 | `duplicates` | Não impedem. Venda que parece já estar na planilha (mesmo `Id da venda`, ou mesma empresa, valor e dia) e contaria duas vezes. |
 | `ignored` | Linhas que não entram (Status diferente de Concluída). |
 
-### `POST /sales/import` — Só admin
+### `POST /sales/import` — Só master
 
 Mesmos parâmetros e validação da prévia. **Substitui todas as vendas importadas antes** pelas do arquivo (o arquivo é a lista completa). Nunca mexe nas vendas da planilha.
 
@@ -485,7 +489,7 @@ As TVs não fazem login, então a rota é pública. Para evitar spam, cada IP po
 
 O horário em que o backend recebeu o log fica em `createdAt`.
 
-### `GET /logs` — Só admin
+### `GET /logs` — Só master
 
 Lista os **200 logs mais recentes**, do mais novo para o mais antigo (pelo horário de recebimento).
 
@@ -493,13 +497,13 @@ Lista os **200 logs mais recentes**, do mais novo para o mais antigo (pelo horá
 
 ---
 
-## Usuários — `/users` (só admin)
+## Usuários — `/users`
 
-Todas exigem login de `admin` (`b2b`/`b2g` → `403`). A senha nunca volta nas respostas.
+Ver e cadastrar: `master` e `admin`. Trocar perfil/senha e excluir: só `master`. `b2b`/`b2g` → `403` em todas. A senha nunca volta nas respostas.
 
 ### `GET /users`
 
-**Resposta:** `data: [{ _id, email, role, createdAt, updatedAt }]`, ordenado por e-mail. Usuário antigo, sem perfil, vem como `admin`.
+**Resposta:** `data: [{ _id, email, role, createdAt, updatedAt }]`, ordenado por e-mail. Usuário antigo, sem perfil, vem como `admin`; o do `MASTER_EMAIL`, como `master`.
 
 ### `POST /users`
 
@@ -510,19 +514,19 @@ Todas exigem login de `admin` (`b2b`/`b2g` → `403`). A senha nunca volta nas r
 | `email` | string | sim | E-mail válido. Convertido para minúsculas e sem espaços. |
 | `password` | string | sim | No mínimo 6 caracteres. |
 | `passwordConfirmation` | string | sim | Igual a `password`, senão "Senhas são diferentes". |
-| `role` | string | sim | `admin`, `b2b` ou `b2g`. |
+| `role` | string | sim | `admin`, `b2b` ou `b2g` (`master` não existe no cadastro). |
 
-**Resposta:** `201 data: { _id, email, role }`. E-mail já cadastrado → `409 Cadastro já realizado`.
+**Resposta:** `201 data: { _id, email, role }`. E-mail já cadastrado → `409 Cadastro já realizado`. Admin cadastrando o e-mail do `MASTER_EMAIL` → `400 Este e-mail é reservado` (senão viraria master).
 
 ### `PATCH /users/:id`
 
 **Body** (`UpdateUserSchema`): `role` e/ou `password` + `passwordConfirmation` (pelo menos um dos dois). Nova senha derruba as sessões abertas da pessoa (refresh tokens revogados).
 
-O admin não muda o próprio perfil (`400`), para nunca ficar sem admin. Usuário que não existe → `404`.
+Ninguém muda o próprio perfil (`400`); o master troca a própria senha. Não dá para promover a `master` (o perfil não existe no schema → `400`). Usuário que não existe → `404`.
 
 ### `DELETE /users/:id`
 
-Exclui e revoga as sessões. A pessoa perde o acesso na hora. O admin não se exclui (`400`). Usuário que não existe → `404`.
+Exclui e revoga as sessões. A pessoa perde o acesso na hora. Ninguém se exclui (`400`). Usuário que não existe → `404`.
 
 ---
 

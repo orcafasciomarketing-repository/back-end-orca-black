@@ -76,6 +76,7 @@ POINTS_CS Pontos por passagem de pessoa com cargo "CS" (definido: 1).
 POINTS_SUPORTE Pontos por passagem de pessoa com cargo "Suporte" (definido: 2).
 BLACK_FRIDAY_GOAL Meta da Black (valor em reais). Lida em config/goal.js com Number(process.env.BLACK_FRIDAY_GOAL ?? 0). Vale quando as metas de setor não estão configuradas.
 BLACK_FRIDAY_GOAL_B2B Meta do B2B (definido: 2.000.000).
+MASTER_EMAIL E-mail do master admin (o único que importa vendas, vê os erros e troca perfil/senha ou exclui usuários). Sem ela, todo admin vale como master.
 BLACK_FRIDAY_GOAL_B2G Meta do B2G (definido: 1.000.000). Com as duas de setor configuradas, a meta total é a soma delas (o teste de config confere que bate com a BLACK_FRIDAY_GOAL).
 
 As variáveis da RD (B2B_FUNIL_*, B2G_FUNIL_*, RD_PASSAGE_CUSTOM_FIELD_ID) não são mais usadas e podem ser apagadas.
@@ -149,11 +150,11 @@ RN-47: Com coluna Status no arquivo, só "Concluída" entra (as outras linhas s�
 RN-48: A prévia compara a importação atual com o arquivo (quantidade e valor) e avisa vendas que parecem já existir na planilha (mesmo "Id da venda", ou mesma empresa, valor e dia), que contariam duas vezes.
 RN-49: Importação não abre popup (reenvia todas as vendas toda vez). Ao gravar, envia um único { type: "sale-updated" }.
 4.12 Perfis de acesso e meta por setor
-RN-50: Perfis fixos: admin (tudo), b2b e b2g (só o próprio setor, no Dashboard e nos Gráficos). Usuário sem role (criado antes dos perfis) é admin.
+RN-50: Perfis fixos: master (tudo), admin (todos os setores; vê e cadastra usuários), b2b e b2g (só o próprio setor, no Dashboard e nos Gráficos). Usuário sem role (criado antes dos perfis) é admin. O master não é gravado: é quem tem o e-mail do MASTER_EMAIL; sem a variável, todo admin vale como master.
 RN-51: O filtro de setor é no servidor: GET /sales/admin e GET /sales/get/:vendorId devolvem só o setor de b2b/b2g. O front também trava o filtro de setor no setor do usuário.
-RN-52: Importação, logs (tela de Erros) e usuários são só do admin: b2b/b2g → 403, e o front esconde as telas e redireciona para o dashboard.
+RN-52: Importação e logs (tela de Erros) são só do master; trocar perfil/senha e excluir usuários também. Admin só vê e cadastra usuários. Fora disso → 403, e o front esconde as telas e redireciona para o dashboard.
 RN-53: O perfil é lido do banco a cada requisição (não do token): trocar o perfil ou excluir o usuário vale na hora.
-RN-54: Não existe cadastro aberto: /auth/register foi removida. O admin cadastra, troca perfil/senha e exclui usuários na tela Usuários (rotas /users). O admin não muda o próprio perfil nem se exclui.
+RN-54: Não existe cadastro aberto: /auth/register foi removida. Master e admin cadastram na tela Usuários (rotas /users); só o master troca perfil/senha e exclui. Ninguém muda o próprio perfil nem se exclui; ninguém vira master pela tela, e o admin não cadastra o e-mail do MASTER_EMAIL.
 RN-55: Meta por setor: B2B 2 milhões, B2G 1 milhão (GET /analytics/goal → segments). Com setor selecionado, o admin compara com a meta do setor. As TVs continuam públicas e com a meta total.
 5. Fluxo da planilha (implementado)
 5.1 Apps Script (na planilha)
@@ -273,7 +274,7 @@ Somente leitura para as vendas da planilha. A planilha é a fonte da verdade del
 O dash do admin mostra todas as vendas, ativas e canceladas (GET /sales/admin).
 
 RF-06b — Acesso às rotas
-Rotas do admin exigem login (authMiddleware, header Authorization: Bearer <token>): GET /sales/admin, GET /sales/get/:vendorId, POST /sales/import/preview, POST /sales/import, GET /logs e /users. Token ausente, inválido ou expirado, ou usuário excluído → 401 (o front deve chamar /auth/refresh). Importação, logs e /users são só do perfil admin (b2b/b2g → 403); ver 4.12.
+Rotas do admin exigem login (authMiddleware, header Authorization: Bearer <token>): GET /sales/admin, GET /sales/get/:vendorId, POST /sales/import/preview, POST /sales/import, GET /logs e /users. Token ausente, inválido ou expirado, ou usuário excluído → 401 (o front deve chamar /auth/refresh). Importação e logs são só do master; /users: master e admin veem e cadastram, só o master edita e exclui (ver 4.12).
 Rotas das telas (TVs) são públicas: /analytics/*, GET /sales/get, GET /sales/events (SSE).
 Planilha: POST /sales/webhook/sheet, protegido pelo header webhook_secret.
 Auth: /auth/login e /auth/refresh são públicas. /auth/register foi removida: cadastro só pelo admin (POST /users). 7. Pendências e problemas conhecidos no código

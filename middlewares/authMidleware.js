@@ -3,6 +3,7 @@ const { isValidObjectId } = require("mongoose");
 const { verifyAccessToken } = require("../shared/accessTokenService");
 const { UnauthorizedError } = require("../shared/errors");
 const UserService = require("../features/user/service/userService");
+const { getUserRole } = require("../config/roles");
 
 exports.authMiddleware = async (req, res, next) => {
   try {
@@ -28,7 +29,7 @@ exports.authMiddleware = async (req, res, next) => {
     if (!user) throw UnauthorizedError("Usuário não encontrado");
 
     req.token = validatedToken;
-    req.user = { id: user._id.toString(), email: user.email, role: user.role };
+    req.user = { id: user._id.toString(), email: user.email, role: getUserRole(user) };
 
     next();
   } catch (err) {

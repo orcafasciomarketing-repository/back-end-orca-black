@@ -4,8 +4,21 @@ const { ConflictError, NotFoundError, ValidationError } = require("../../../shar
 const User = require("../repository/userRepository");
 const { hashPassword } = require("../../security/service/passwordService");
 const RefreshTokenService = require("../../token/service/tokenService");
+const { getUserRole, isMasterEmail } = require("../../../config/roles");
 
-exports.createUser = async ({ email, password, role }) => {
+// Usuário como vai para o front: sem a senha e com o perfil que vale (o master vem como "master")
+exports.toPublicUser = (user) => {
+  const { passwordHash, ...data } = user.toJSON();
+  return { ...data, role: getUserRole(user) };
+};
+
+// currentUserRole: perfil de quem cadastra. Só o master cadastra o e-mail do master
+// (senão um admin criaria a conta com esse e-mail e viraria master)
+exports.createUser = async ({ email, password, role }, currentUserRole) => {
+  if (isMasterEmail(email) && currentUserRole !== "master") {
+    throw ValidationError("Este e-mail é reservado");
+  }
+
   const existingUser = await User.findUserByEmail(email);
 
   if (existingUser) {
@@ -14,7 +27,7 @@ exports.createUser = async ({ email, password, role }) => {
 
   const hashedPassword = await hashPassword(password);
 
-  return await User.createUser({ email, passwordHash: hashedPassword, role });
+  return exports.toPublicUser(await User.createUser({ email, passwordHash: hashedPassword, role }));
 };
 
 exports.findUserByEmail = async (email) => {
@@ -30,7 +43,8 @@ exports.findUserWithPassword = async (id) => {
 };
 
 exports.findAll = async () => {
-  return await User.findAll();
+  const users = await User.findAll();
+  return users.map(exports.toPublicUser);
 };
 
 const findExistingUser = async (id) => {
@@ -57,7 +71,7 @@ exports.updateUser = async (id, { role, password }, currentUserId) => {
   // Senha nova: derruba as sessões abertas, a pessoa entra de novo com a senha nova
   if (password !== undefined) await RefreshTokenService.revokeAllTokens(id);
 
-  return updatedUser;
+  return exports.toPublicUser(updatedUser);
 };
 
 exports.deleteUser = async (id, currentUserId) => {

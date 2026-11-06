@@ -27,7 +27,7 @@ exports.loginUser = async (userData) => {
   const refreshToken = await RefreshTokenService.createToken(user._id);
 
   return {
-    user,
+    user: UserService.toPublicUser(user),
     token: accessToken,
     refreshToken: refreshToken.token,
     expiration: refreshToken.expiresAt,
@@ -49,6 +49,6 @@ exports.refreshUserTokens = async (oldRefreshToken) => {
     token: accessToken,
     refreshToken: newToken.token,
     expiration: newToken.expiresAt,
-    user: user,
+    user: UserService.toPublicUser(user),
   };
 };

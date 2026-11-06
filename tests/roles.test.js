@@ -2,8 +2,9 @@ const { describe, it, before, after, beforeEach } = require("node:test");
 const assert = require("node:assert/strict");
 
 // Hash rápido só nos testes (o padrão de 15 rodadas deixaria cada cadastro lento).
-// Precisa vir antes dos requires do projeto: o passwordService lê ao carregar
+// Precisa vir antes dos requires do projeto: o passwordService e o config/roles leem ao carregar
 process.env.ROUND_ENCRYPTION = "4";
+process.env.MASTER_EMAIL = "Master@Teste.com";
 
 const {
   startTestApp,
@@ -19,7 +20,7 @@ const User = require("../features/user/model/userModel");
 const Token = require("../features/token/model/tokenModel");
 const { generateAccessToken } = require("../shared/accessTokenService");
 
-describe("Perfis de acesso (admin, b2b, b2g)", () => {
+describe("Perfis de acesso (master, admin, b2b, b2g)", () => {
   let testApp;
   let seed;
   let tokens;
@@ -37,6 +38,8 @@ describe("Perfis de acesso (admin, b2b, b2g)", () => {
     await User.deleteMany({});
     seed = await seedBase();
     tokens = {
+      // O master é um admin com o e-mail do MASTER_EMAIL (sem diferença de maiúscula)
+      master: await createUserToken("admin", "master@teste.com"),
       admin: await createUserToken("admin"),
       b2b: await createUserToken("b2b"),
       b2g: await createUserToken("b2g"),
@@ -71,6 +74,7 @@ describe("Perfis de acesso (admin, b2b, b2g)", () => {
 
   describe("vendas do admin (GET /sales/admin e /sales/get/:vendorId)", () => {
     const cases = [
+      ["master", ["venda-b2b", "venda-b2g"]],
       ["admin", ["venda-b2b", "venda-b2g"]],
       ["antigo", ["venda-b2b", "venda-b2g"]],
       ["b2b", ["venda-b2b"]],
@@ -99,38 +103,53 @@ describe("Perfis de acesso (admin, b2b, b2g)", () => {
     });
   });
 
-  describe("telas só do admin (importação, erros e usuários)", () => {
-    const adminOnly = [
-      ["POST", "/sales/import/preview", CSV],
-      ["POST", "/sales/import", CSV],
-      ["GET", "/logs"],
-      ["GET", "/users"],
-      ["POST", "/users", { email: "novo@teste.com", password: "123456", passwordConfirmation: "123456", role: "b2b" }],
+  describe("o que cada perfil acessa (importação, erros e usuários)", () => {
+    const NEW_USER = { email: "novo@teste.com", password: "123456", passwordConfirmation: "123456", role: "b2b" };
+    const otherUserId = async () => (await User.findOne({ email: "b2g@teste.com" }))._id;
+
+    // [método, rota, body, perfis liberados]
+    const routes = [
+      ["POST", "/sales/import/preview", () => CSV, ["master"]],
+      ["POST", "/sales/import", () => CSV, ["master"]],
+      ["GET", "/logs", () => undefined, ["master"]],
+      ["GET", "/users", () => undefined, ["master", "admin", "antigo"]],
+      ["POST", "/users", () => NEW_USER, ["master", "admin", "antigo"]],
+      ["PATCH", "/users/:id", () => ({ role: "b2b" }), ["master"]],
+      ["DELETE", "/users/:id", () => undefined, ["master"]],
     ];
 
-    for (const [method, path, body] of adminOnly) {
-      for (const role of ["b2b", "b2g"]) {
-        it(`${method} ${path} com ${role} → 403`, async () => {
-          const res = await request(method, path, tokens[role], body);
+    for (const [method, path, body, allowed] of routes) {
+      for (const role of ["master", "admin", "antigo", "b2b", "b2g"]) {
+        const isAllowed = allowed.includes(role);
 
-          assert.equal(res.status, 403);
-          assert.equal(res.body.error, "Sem permissão para acessar");
-        });
-      }
+        it(`${method} ${path} com ${role} → ${isAllowed ? "liberado" : "403"}`, async () => {
+          const url = path.replace(":id", await otherUserId());
+          const res = await request(method, url, tokens[role], body());
 
-      for (const role of ["admin", "antigo"]) {
-        it(`${method} ${path} com ${role} → liberado`, async () => {
-          const res = await request(method, path, tokens[role], body);
-
-          assert.ok([200, 201].includes(res.status), `status ${res.status}`);
+          if (isAllowed) {
+            assert.ok([200, 201].includes(res.status), `status ${res.status}`);
+          } else {
+            assert.equal(res.status, 403);
+            assert.equal(res.body.error, "Sem permissão para acessar");
+          }
         });
       }
     }
 
-    it("importação recusada para b2b não grava nada", async () => {
+    it("importação recusada para admin e b2b não grava nada", async () => {
+      await request("POST", "/sales/import", tokens.admin, CSV);
       await request("POST", "/sales/import", tokens.b2b, CSV);
 
       assert.equal(await Sales.countDocuments({ source: "importacao" }), 0);
+    });
+
+    it("admin recusado não troca o perfil nem exclui ninguém", async () => {
+      const id = await otherUserId();
+
+      await request("PATCH", `/users/${id}`, tokens.admin, { role: "admin" });
+      await request("DELETE", `/users/${id}`, tokens.admin);
+
+      assert.equal((await User.findById(id)).role, "b2g");
     });
   });
 
@@ -210,6 +229,28 @@ describe("Perfis de acesso (admin, b2b, b2g)", () => {
       assert.equal(login.body.user.role, "b2g");
     });
 
+    it("login do master devolve role master (o perfil gravado continua admin)", async () => {
+      await request("POST", "/users", tokens.master, newUser({ role: "admin" }));
+      await User.deleteOne({ email: "master@teste.com" });
+      await User.updateOne({ email: "nova@teste.com" }, { email: "master@teste.com" });
+
+      const login = await request("POST", "/auth/login", undefined, { email: "master@teste.com", password: "123456" });
+
+      assert.equal(login.status, 200);
+      assert.equal(login.body.user.role, "master");
+      assert.equal((await User.findOne({ email: "master@teste.com" })).role, "admin");
+    });
+
+    it("admin não cadastra o e-mail do master (viraria master) → 400", async () => {
+      await User.deleteOne({ email: "master@teste.com" });
+
+      const res = await request("POST", "/users", tokens.admin, newUser({ email: "master@teste.com", role: "admin" }));
+
+      assert.equal(res.status, 400);
+      assert.equal(res.body.error, "Este e-mail é reservado");
+      assert.equal(await User.countDocuments({ email: "master@teste.com" }), 0);
+    });
+
     it("login de usuário antigo (sem perfil) devolve role admin", async () => {
       await request("POST", "/users", tokens.admin, newUser({ role: "admin" }));
       await User.collection.updateOne({ email: "nova@teste.com" }, { $unset: { role: "" } });
@@ -242,12 +283,13 @@ describe("Perfis de acesso (admin, b2b, b2g)", () => {
       assert.equal(res.status, 409);
     });
 
-    it("lista os usuários com o perfil, sem a senha (antigo aparece como admin)", async () => {
+    it("lista os usuários com o perfil, sem a senha (antigo aparece como admin, master como master)", async () => {
       const { status, body } = await request("GET", "/users", tokens.admin);
       const roleByEmail = Object.fromEntries(body.data.map((user) => [user.email, user.role]));
 
       assert.equal(status, 200);
       assert.deepEqual(roleByEmail, {
+        "master@teste.com": "master",
         "admin@teste.com": "admin",
         "antigo@teste.com": "admin",
         "b2b@teste.com": "b2b",
@@ -259,11 +301,12 @@ describe("Perfis de acesso (admin, b2b, b2g)", () => {
     it("troca o perfil de outro usuário", async () => {
       const user = await User.findOne({ email: "b2b@teste.com" });
 
-      const res = await request("PATCH", `/users/${user._id}`, tokens.admin, { role: "admin" });
+      const res = await request("PATCH", `/users/${user._id}`, tokens.master, { role: "admin" });
 
       assert.equal(res.status, 200);
       assert.equal(res.body.data.role, "admin");
       assert.equal((await User.findById(user._id)).role, "admin");
+      assert.equal(res.body.data.passwordHash, undefined);
     });
 
     it("troca a senha: a nova funciona, a antiga não, e as sessões abertas caem", async () => {
@@ -271,7 +314,7 @@ describe("Perfis de acesso (admin, b2b, b2g)", () => {
       const login = await request("POST", "/auth/login", undefined, { email: "nova@teste.com", password: "123456" });
       const user = await User.findOne({ email: "nova@teste.com" });
 
-      const res = await request("PATCH", `/users/${user._id}`, tokens.admin, {
+      const res = await request("PATCH", `/users/${user._id}`, tokens.master, {
         password: "nova-senha",
         passwordConfirmation: "nova-senha",
       });
@@ -289,26 +332,42 @@ describe("Perfis de acesso (admin, b2b, b2g)", () => {
     it("PATCH sem perfil e sem senha → 400", async () => {
       const user = await User.findOne({ email: "b2b@teste.com" });
 
-      const res = await request("PATCH", `/users/${user._id}`, tokens.admin, {});
+      const res = await request("PATCH", `/users/${user._id}`, tokens.master, {});
 
       assert.equal(res.status, 400);
     });
 
-    it("admin não troca o próprio perfil nem se exclui (nunca fica sem admin)", async () => {
-      const me = await User.findOne({ email: "admin@teste.com" });
+    it("master não troca o próprio perfil nem se exclui, mas troca a própria senha", async () => {
+      const me = await User.findOne({ email: "master@teste.com" });
 
-      const patch = await request("PATCH", `/users/${me._id}`, tokens.admin, { role: "b2b" });
-      const remove = await request("DELETE", `/users/${me._id}`, tokens.admin);
+      const patch = await request("PATCH", `/users/${me._id}`, tokens.master, { role: "b2b" });
+      const remove = await request("DELETE", `/users/${me._id}`, tokens.master);
+      const password = await request("PATCH", `/users/${me._id}`, tokens.master, {
+        password: "outra-senha",
+        passwordConfirmation: "outra-senha",
+      });
 
       assert.equal(patch.status, 400);
       assert.equal(remove.status, 400);
-      assert.equal((await User.findById(me._id)).role, "admin");
+      assert.equal(password.status, 200);
+      assert.equal(password.body.data.role, "master");
+      assert.equal(await User.countDocuments({ _id: me._id }), 1);
+    });
+
+    it("ninguém vira master pela rota (perfil master não existe no cadastro)", async () => {
+      const user = await User.findOne({ email: "b2b@teste.com" });
+
+      const patch = await request("PATCH", `/users/${user._id}`, tokens.master, { role: "master" });
+      const create = await request("POST", "/users", tokens.master, newUser({ role: "master" }));
+
+      assert.equal(patch.status, 400);
+      assert.equal(create.status, 400);
     });
 
     it("exclui outro usuário: ele perde o acesso na hora", async () => {
       const user = await User.findOne({ email: "b2b@teste.com" });
 
-      const res = await request("DELETE", `/users/${user._id}`, tokens.admin);
+      const res = await request("DELETE", `/users/${user._id}`, tokens.master);
       const afterDelete = await request("GET", "/sales/admin", tokens.b2b);
 
       assert.equal(res.status, 200);
@@ -318,8 +377,8 @@ describe("Perfis de acesso (admin, b2b, b2g)", () => {
 
     for (const id of ["6650f0f0f0f0f0f0f0f0f0f0", "nao-e-um-id"]) {
       it(`usuário ${id} que não existe → 404`, async () => {
-        const patch = await request("PATCH", `/users/${id}`, tokens.admin, { role: "b2b" });
-        const remove = await request("DELETE", `/users/${id}`, tokens.admin);
+        const patch = await request("PATCH", `/users/${id}`, tokens.master, { role: "b2b" });
+        const remove = await request("DELETE", `/users/${id}`, tokens.master);
 
         assert.equal(patch.status, 404);
         assert.equal(remove.status, 404);

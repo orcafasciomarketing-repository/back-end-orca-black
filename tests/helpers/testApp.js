@@ -30,6 +30,10 @@ process.env.BLACK_FRIDAY_GOAL = String(TEST_GOAL);
 process.env.BLACK_FRIDAY_GOAL_B2B = String(TEST_SEGMENT_GOALS.b2b);
 process.env.BLACK_FRIDAY_GOAL_B2G = String(TEST_SEGMENT_GOALS.b2g);
 
+// Sem master (todo admin vale como master, como antes), a não ser que o arquivo de teste
+// defina antes. String vazia: o dotenv não troca pelo MASTER_EMAIL do .env
+process.env.MASTER_EMAIL ??= "";
+
 // O WEBHOOK_SECRET e o JWT_SECRET vêm do .env de verdade
 require("dotenv").config({ quiet: true });
 
@@ -153,8 +157,7 @@ exports.sendSheet = async (baseUrl, rows, secret) => {
 // Cria (ou reaproveita) um usuário com o perfil e devolve o token de acesso dele,
 // igual ao que o login gera. O authMiddleware confere o usuário no banco.
 // role undefined = usuário antigo, gravado antes de existir o campo
-exports.createUserToken = async (role) => {
-  const email = `${role ?? "antigo"}@teste.com`;
+exports.createUserToken = async (role, email = `${role ?? "antigo"}@teste.com`) => {
   let user = await User.findOne({ email });
   if (!user) {
     // Sem passar pelo hash: estes testes não fazem login com senha

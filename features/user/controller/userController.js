@@ -10,7 +10,7 @@ exports.getUsers = async (req, res, next) => {
 };
 
 exports.createUser = async (req, res, next) => {
-  const user = await UserService.createUser(req.data);
+  const user = await UserService.createUser(req.data, req.user.role);
   return res.status(201).json({
     success: true,
     data: user,
