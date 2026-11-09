@@ -10,13 +10,8 @@ const SaveMonthlyGoalSchema = zod
       .number({ message: "Percentual de renovação inválido" })
       .min(0, "O percentual de renovação vai de 0 a 100")
       .max(100, "O percentual de renovação vai de 0 a 100"),
-    superPercent: zod
-      .number({ message: "Percentual da Super meta inválido" })
-      .gt(100, "A Super meta precisa ser maior que 100% da meta")
-      .max(1000, "Percentual da Super meta alto demais"),
-    blackPercent: zod
-      .number({ message: "Percentual da Meta black inválido" })
-      .max(1000, "Percentual da Meta black alto demais"),
+    superGoal: money("Super meta do setor inválida"),
+    blackGoal: money("Meta black do setor inválida").nullable().optional(),
     levels: zod
       .array(
         zod.strictObject({
@@ -38,8 +33,8 @@ const SaveMonthlyGoalSchema = zod
       )
       .max(300, "Vendedores demais"),
   })
-  .refine((data) => data.blackPercent > data.superPercent, {
-    message: "A Meta black precisa ser maior que a Super meta",
+  .refine((data) => data.superGoal > data.goal, {
+    message: "A Super meta precisa ser maior que a Meta",
   });
 
 module.exports = { SaveMonthlyGoalSchema };

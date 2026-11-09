@@ -4,7 +4,9 @@
 // - a semana vai de segunda a domingo e pertence ao mês da segunda-feira;
 // - o mês da meta são as semanas que começam nele (soma das semanas = mês);
 // - valores em reais, comparados em centavos para a soma sempre fechar;
-// - três faixas: Meta, Super meta (Meta × superPercent%) e Meta black (Meta × blackPercent%).
+// - três faixas, todas em R$ por setor: Meta, Super meta e Meta black (a black só no mês da campanha).
+//   Cada uma desce igual: setor → renovação/vendas (farmPercent) → pessoas, na proporção da Meta de cada
+//   pessoa (que já vem dos pesos de senioridade) → semanas, na proporção da Meta de cada semana.
 
 const SAO_PAULO_OFFSET_MS = 3 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -70,20 +72,62 @@ const splitEqually = (totalCents, parts) => {
   return Array.from({ length: parts }, (_, index) => base + (index < rest ? 1 : 0));
 };
 
-// Parte do setor: renovação = meta × farmPercent%; vendas = o resto (a soma sempre fecha)
-const segmentParts = ({ goal, farmPercent }) => {
-  const totalCents = toCents(goal);
+// Renovação = valor × farmPercent%; vendas = o resto (a soma sempre fecha)
+const splitByFarm = (value, farmPercent) => {
+  const totalCents = toCents(value);
   const farmCents = Math.round((totalCents * farmPercent) / 100);
   return { farm: fromCents(farmCents), sales: fromCents(totalCents - farmCents) };
 };
 
-const tiersOf = (goal, superPercent, blackPercent) => {
-  const cents = toCents(goal);
-  return {
-    goal: fromCents(cents),
-    super: fromCents(Math.round((cents * superPercent) / 100)),
-    black: fromCents(Math.round((cents * blackPercent) / 100)),
-  };
+const segmentParts = ({ goal, farmPercent }) => splitByFarm(goal, farmPercent);
+
+const segmentTiers = ({ goal, superGoal }, blackGoal = 0) => ({
+  goal: fromCents(toCents(goal)),
+  super: fromCents(toCents(superGoal)),
+  black: fromCents(toCents(blackGoal)),
+});
+
+// Reparte centavos na proporção de outros valores (em centavos); sem proporção, divide igual
+const shareLike = (totalCents, keys, weightsCents) => {
+  const hasWeight = weightsCents.some((value) => value > 0);
+  return distributeByWeight(
+    totalCents,
+    keys.map((key, index) => ({ key, weight: hasWeight ? weightsCents[index] : 1 })),
+  );
+};
+
+// Faixas de cada pessoa: a Meta é a dela; a Super e a Black do setor descem para renovação/vendas e
+// depois para as pessoas daquele tipo, na proporção da Meta de cada uma
+const peopleTiers = (people, tiers, farmPercent) => {
+  const result = new Map(people.map((person) => [String(person.vendorId), { goal: fromCents(toCents(person.goal)), super: 0, black: 0 }]));
+  for (const tier of ["super", "black"]) {
+    const parts = splitByFarm(tiers[tier], farmPercent);
+    for (const type of ["farm", "sales"]) {
+      const members = people.filter((person) => person.type === type);
+      const shares = shareLike(
+        toCents(parts[type]),
+        members.map((person) => String(person.vendorId)),
+        members.map((person) => toCents(person.goal)),
+      );
+      shares.forEach((cents, key) => {
+        result.get(key)[tier] = fromCents(cents);
+      });
+    }
+  }
+  return result;
+};
+
+// Faixas de cada semana da pessoa: a Meta é a da semana; a Super e a Black seguem a proporção da Meta semanal
+const weekTiers = (personTiers, weekGoals) => {
+  const keys = weekGoals.map((_, index) => index);
+  const weights = weekGoals.map(toCents);
+  const superShares = shareLike(toCents(personTiers.super), keys, weights);
+  const blackShares = shareLike(toCents(personTiers.black), keys, weights);
+  return weekGoals.map((value, index) => ({
+    goal: fromCents(toCents(value)),
+    super: fromCents(superShares.get(index)),
+    black: fromCents(blackShares.get(index)),
+  }));
 };
 
 const sumTiers = (list) =>
@@ -98,10 +142,13 @@ const sumTiers = (list) =>
 
 const round1 = (value) => Math.round(value * 10) / 10;
 
-// Faixa atual: a primeira ainda não batida. Bateu as três: fica na black, e o que passar é excedente
+// Faixa atual: a primeira ainda não batida (fora do mês da campanha não tem Meta black).
+// Bateu todas: fica na última, e o que passar dela é excedente
 const tierProgress = (realized, tiers) => {
-  const reached = TIERS.filter((tier) => tiers[tier] > 0 && realized >= tiers[tier]);
-  const current = TIERS.find((tier) => !reached.includes(tier)) ?? "black";
+  const available = TIERS.filter((tier) => tiers[tier] > 0);
+  const last = available[available.length - 1] ?? "goal";
+  const reached = available.filter((tier) => realized >= tiers[tier]);
+  const current = available.find((tier) => !reached.includes(tier)) ?? last;
   const target = tiers[current];
 
   return {
@@ -112,7 +159,8 @@ const tierProgress = (realized, tiers) => {
     target,
     percent: target > 0 ? round1((realized / target) * 100) : 0,
     remaining: fromCents(Math.max(toCents(target) - toCents(realized), 0)),
-    excess: fromCents(Math.max(toCents(realized) - toCents(tiers.black), 0)),
+    available,
+    excess: tiers[last] > 0 ? fromCents(Math.max(toCents(realized) - toCents(tiers[last]), 0)) : 0,
   };
 };
 
@@ -151,8 +199,11 @@ module.exports = {
   monthDays,
   distributeByWeight,
   splitEqually,
+  splitByFarm,
   segmentParts,
-  tiersOf,
+  segmentTiers,
+  peopleTiers,
+  weekTiers,
   sumTiers,
   tierProgress,
   paceOf,

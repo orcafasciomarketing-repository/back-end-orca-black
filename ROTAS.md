@@ -786,7 +786,7 @@ Exclui um lançamento errado; o saldo se recalcula. Retirada que não existe →
 
 ## Metas mensais — `/goals`
 
-Metas em R$ por setor, por vendedor e por semana, com três faixas (Meta, Super meta e Meta black). Regras em RN-69 a RN-73. **Fase de teste com o gestor: só `master` e `admin`** (b2b, b2g, vendor e sdr → `403`; sem login → `401`). Não mexe na meta das TVs (`BLACK_FRIDAY_GOAL*` do `.env`). Mês fora do formato `AAAA-MM` ou setor diferente de `b2b`/`b2g` → `400`.
+Metas em R$ por setor, por vendedor e por semana, com três faixas: Meta, Super meta e Meta black (a black só no mês em que a campanha começa, `config/campaign.js`). As três funcionam igual: valor do setor em R$ → renovação/vendas pelo `farmPercent` → pessoas na proporção da Meta de cada uma (que vem dos pesos de senioridade) → semanas na proporção da Meta semanal. Regras em RN-69 a RN-73. **Fase de teste com o gestor: só `master` e `admin`** (b2b, b2g, vendor e sdr → `403`; sem login → `401`). Não mexe na meta das TVs (`BLACK_FRIDAY_GOAL*` do `.env`). Mês fora do formato `AAAA-MM` ou setor diferente de `b2b`/`b2g` → `400`.
 
 ### `GET /goals/:month`
 
@@ -796,9 +796,10 @@ Para a tela de cadastro.
 {
   "month": "2026-11",
   "weeks": [{ "index": 0, "start": "2026-11-02", "end": "2026-11-08" }],
+  "black": { "month": "2026-11", "active": true, "total": 3000000, "suggestedGoals": { "b2b": 2000000, "b2g": 1000000 } },
   "segments": {
     "b2b": {
-      "config": { "month": "2026-11", "goal": 120000, "farmPercent": 40, "superPercent": 120, "blackPercent": 150,
+      "config": { "month": "2026-11", "goal": 120000, "farmPercent": 40, "superGoal": 150000, "blackGoal": 2000000,
         "levels": [{ "key": "junior", "name": "Júnior", "weight": 1 }],
         "people": [{ "vendorId": "...", "type": "sales", "level": "junior", "goal": 9000, "weeks": [1800, 1800, 1800, 1800, 1800] }],
         "updatedBy": "admin@...", "updatedAt": "..." },
@@ -811,14 +812,15 @@ Para a tela de cadastro.
 ```
 
 - `weeks`: semanas (segunda a domingo) que **começam** no mês; a última pode terminar no mês seguinte.
+- `black.active`: o mês é o da campanha (tem Meta black). `suggestedGoals`: a Meta black de cada setor já cadastrada no `.env` (`BLACK_FRIDAY_GOAL_B2B/B2G`, a mesma das TVs), para a tela preencher.
 - `config`: o que está salvo (ou `null`). `previous`: sem `config`, o último mês salvo antes deste, para a tela copiar.
 - `vendors`: vendedores do setor pelo cargo (`"B2B ..."` / `"B2G ..."`); `type` = `farm` se o cargo tem "Farmer", senão `sales`.
 
 ### `PUT /goals/:month/:segment`
 
-Body (`strictObject`): `{ goal, farmPercent, superPercent, blackPercent, levels: [{ key, name, weight }], people: [{ vendorId, level, goal, weeks: [...] }] }`. Substitui o mês inteiro daquele setor (os outros meses não mudam). Só salva quando tudo fecha (senão `400` com a mensagem):
+Body (`strictObject`): `{ goal, superGoal, blackGoal?, farmPercent, levels: [{ key, name, weight }], people: [{ vendorId, level, goal, weeks: [...] }] }` (valores em R$; `blackGoal` só é gravado no mês da campanha). Substitui o mês inteiro daquele setor (os outros meses não mudam). Só salva quando tudo fecha (senão `400` com a mensagem):
 
-- `goal` > 0; `farmPercent` de 0 a 100; `superPercent` > 100; `blackPercent` > `superPercent`; pelo menos um nível, com peso > 0 e chave única;
+- `goal` > 0; `superGoal` > `goal`; no mês da campanha, `blackGoal` > `superGoal`; `farmPercent` de 0 a 100; pelo menos um nível, com peso > 0 e chave única;
 - cada vendedor existe, é do setor, aparece uma vez e tem um nível válido;
 - uma meta por semana do mês, e a soma das semanas = a meta mensal do vendedor (no centavo);
 - a soma das metas dos Farmers = `goal × farmPercent%` e a dos outros = o resto (no centavo). Ex.: `"Renovação: distribuído R$ 40.000,00 de R$ 48.000,00"`.
@@ -835,8 +837,8 @@ Progresso do mês (vendas `ativa`, pelo `realizedAt` no horário de São Paulo, 
 
 ```json
 {
-  "month": "2026-11", "today": "2026-11-09", "weeks": [], "days": ["2026-11-02", "..."],
-  "segments": [{ "segment": "b2b", "goal": 120000, "farmPercent": 40, "superPercent": 120, "blackPercent": 150,
+  "month": "2026-11", "today": "2026-11-09", "weeks": [], "days": ["2026-11-02", "..."], "black": { "active": true, "...": "..." },
+  "segments": [{ "segment": "b2b", "goal": 120000, "farmPercent": 40, "superGoal": 150000, "blackGoal": 2000000,
     "parts": { "farm": { "goal": 48000, "realized": 3500 }, "sales": { "goal": 72000, "realized": 44500 } },
     "month": "<progresso>", "weeks": ["<progresso da semana>"], "cumulative": [0, 1200] }],
   "people": [{ "vendorId": "...", "segment": "b2b", "type": "sales", "name": "...", "job": "...", "imageUrl": "...",
@@ -847,9 +849,10 @@ Progresso do mês (vendas `ativa`, pelo `realizedAt` no horário de São Paulo, 
 }
 ```
 
-`<progresso>`: `{ realized, tiers: { goal, super, black }, reached: ["goal", ...], current: "goal" | "super" | "black", target, percent, remaining, excess, pace: { totalDays, elapsedDays, remainingDays, expected, status: "done" | "ahead" | "behind" | "upcoming", neededPerDay, projection } }`.
+`<progresso>`: `{ realized, tiers: { goal, super, black }, available, reached: ["goal", ...], current: "goal" | "super" | "black", target, percent, remaining, excess, pace: { totalDays, elapsedDays, remainingDays, expected, status: "done" | "ahead" | "behind" | "upcoming", neededPerDay, projection } }`.
 
-- `current`: a primeira faixa ainda não batida; bateu as três, fica `black` e o que passou dela vai em `excess`. `percent` é do `target` (a faixa atual).
+- `available`: as faixas do mês (`["goal", "super"]` fora do mês da campanha; com `"black"` nele). `current`: a primeira ainda não batida; bateu todas, fica na última e o que passou dela vai em `excess`. `percent` é do `target` (a faixa atual).
+- `tiers` da pessoa: a Meta é a dela; a Super e a Black são as do setor divididas entre renovação/vendas e depois na proporção da Meta de cada pessoa do mesmo tipo. Nas semanas, na proporção da Meta semanal.
 - `pace` é em relação à Meta (faixa normal): `expected` = quanto já deveria ter até hoje; `neededPerDay` = quanto falta ÷ dias que faltam; `projection` = ritmo atual até o fim.
 - `people` vem do mais perto para o mais longe da Meta; `teams` = soma das pessoas de cada time; `cumulative` = acumulado por dia (`days`).
 - Mês sem meta: listas vazias e `summary` zerado.

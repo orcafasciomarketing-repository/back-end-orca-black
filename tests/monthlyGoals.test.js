@@ -1,7 +1,7 @@
 const { describe, it, before, after, beforeEach } = require("node:test");
 const assert = require("node:assert/strict");
 
-const { startTestApp, seedBase, clearDatabase, createUserToken } = require("./helpers/testApp");
+const { startTestApp, seedBase, clearDatabase, createUserToken, TEST_GOAL } = require("./helpers/testApp");
 
 const Sales = require("../features/sale/model/salesModel");
 const Vendors = require("../features/vendors/model/vendorsModel");
@@ -44,9 +44,34 @@ describe("Cálculo das metas mensais (goalCalculator)", () => {
     assert.deepEqual(calc.segmentParts({ goal: 1000.01, farmPercent: 60 }), { farm: 600.01, sales: 400 });
   });
 
+  it("Super e Black do setor descem para renovação/vendas e para as pessoas na proporção da Meta de cada uma", () => {
+    const people = [
+      { vendorId: "jr", type: "sales", goal: 1000 },
+      { vendorId: "sr", type: "sales", goal: 2000 },
+      { vendorId: "fa", type: "farm", goal: 1000 },
+    ];
+    const tiers = calc.segmentTiers({ goal: 4000, superGoal: 6000 }, 12000);
+    const byPerson = calc.peopleTiers(people, tiers, 25);
+
+    assert.deepEqual(byPerson.get("jr"), { goal: 1000, super: 1500, black: 3000 });
+    assert.deepEqual(byPerson.get("sr"), { goal: 2000, super: 3000, black: 6000 });
+    assert.deepEqual(byPerson.get("fa"), { goal: 1000, super: 1500, black: 3000 });
+
+    assert.deepEqual(calc.weekTiers({ goal: 1000, super: 1500, black: 3000 }, [400, 600]), [
+      { goal: 400, super: 600, black: 1200 },
+      { goal: 600, super: 900, black: 1800 },
+    ]);
+  });
+
+  it("fora do mês da campanha só há Meta e Super; bateu a Super, o que passa é excedente", () => {
+    const progress = calc.tierProgress(1300, { goal: 1000, super: 1200, black: 0 });
+    assert.deepEqual(progress.available, ["goal", "super"]);
+    assert.equal(progress.current, "super");
+    assert.equal(progress.excess, 100);
+  });
+
   it("faixas: Meta, depois Super, depois Black; o que passa da Black é excedente", () => {
-    const tiers = calc.tiersOf(4000, 120, 150);
-    assert.deepEqual(tiers, { goal: 4000, super: 4800, black: 6000 });
+    const tiers = { goal: 4000, super: 4800, black: 6000 };
 
     assert.equal(calc.tierProgress(1000, tiers).current, "goal");
     assert.equal(calc.tierProgress(1000, tiers).remaining, 3000);
@@ -122,12 +147,11 @@ describe("Metas mensais (/goals)", () => {
     return { status: res.status, body: text.startsWith("{") ? JSON.parse(text) : text };
   };
 
-  // B2B: meta 10.000, 60% renovação (6.000 para o Farmer A2) e 40% vendas (4.000 para o A1)
+  // B2B: meta 10.000 e super 12.000; 60% renovação (6.000 para o Farmer A2) e 40% vendas (4.000 para o A1)
   const validB2b = () => ({
     goal: 10000,
     farmPercent: 60,
-    superPercent: 120,
-    blackPercent: 150,
+    superGoal: 12000,
     levels: [
       { key: "jr", name: "Júnior", weight: 1 },
       { key: "sr", name: "Sênior", weight: 2 },
@@ -202,20 +226,18 @@ describe("Metas mensais (/goals)", () => {
       assert.equal(next.segments.b2b.config, null);
       assert.equal(next.segments.b2b.previous.month, MONTH);
       assert.equal(next.weeks.length, 5);
+      assert.equal(next.black.total, TEST_GOAL);
     });
 
     it("salvar de novo substitui o mês, sem mexer nos outros meses", async () => {
       await request("PUT", `/goals/${MONTH}/b2b`, tokens.admin, validB2b());
-      await request("PUT", "/goals/2026-11/b2b", tokens.admin, {
-        ...validB2b(),
-        people: validB2b().people.map((person) => ({ ...person, weeks: [...person.weeks.map((value) => value * 0.8), person.goal * 0.2] })),
-      });
-      const changed = { ...validB2b(), superPercent: 130 };
+      assert.equal((await request("PUT", "/goals/2026-12/b2b", tokens.admin, validB2b())).status, 200);
+      const changed = { ...validB2b(), superGoal: 13000 };
       assert.equal((await request("PUT", `/goals/${MONTH}/b2b`, tokens.admin, changed)).status, 200);
 
       assert.equal(await MonthlyGoal.countDocuments({}), 2);
-      assert.equal((await MonthlyGoal.findOne({ month: MONTH })).superPercent, 130);
-      assert.equal((await MonthlyGoal.findOne({ month: "2026-11" })).superPercent, 120);
+      assert.equal((await MonthlyGoal.findOne({ month: MONTH })).superGoal, 13000);
+      assert.equal((await MonthlyGoal.findOne({ month: "2026-12" })).superGoal, 12000);
     });
 
     it("recusa com a mensagem do que não fecha", async () => {
@@ -226,8 +248,7 @@ describe("Metas mensais (/goals)", () => {
         [{ people: [...validB2b().people, { vendorId: String(seed.vendorB1._id), level: "jr", goal: 0, weeks: [0, 0, 0, 0] }] }, /não é do setor B2B/],
         [{ people: [{ ...validB2b().people[0], level: "xx" }, validB2b().people[1]] }, /nível válido/],
         [{ people: [{ ...validB2b().people[0], weeks: [2000, 2000] }, validB2b().people[1]] }, /4 semanas/],
-        [{ blackPercent: 110 }, /Meta black precisa ser maior/],
-        [{ superPercent: 100 }, /Super meta precisa ser maior/],
+        [{ superGoal: 10000 }, /Super meta precisa ser maior que a Meta/],
         [{ levels: [] }, /pelo menos um nível/],
         [{ extra: true }, /./],
       ];
@@ -243,6 +264,60 @@ describe("Metas mensais (/goals)", () => {
       await request("PUT", `/goals/${MONTH}/b2b`, tokens.admin, validB2b());
       assert.equal((await request("DELETE", `/goals/${MONTH}/b2b`, tokens.admin)).status, 200);
       assert.equal((await request("DELETE", `/goals/${MONTH}/b2b`, tokens.admin)).status, 404);
+    });
+  });
+
+  describe("Meta black no mês da campanha (2026-11)", () => {
+    // B2B: Meta 3.000, Super 4.000 e Black 5.400, todas em R$; 60% renovação
+    const novemberB2b = (changes = {}) => ({
+      goal: 3000,
+      farmPercent: 60,
+      superGoal: 4000,
+      blackGoal: 5400,
+      levels: [{ key: "jr", name: "Júnior", weight: 1 }],
+      people: [
+        { vendorId: String(seed.vendorA1._id), level: "jr", goal: 1200, weeks: [240, 240, 240, 240, 240] },
+        { vendorId: String(seed.vendorA2._id), level: "jr", goal: 1800, weeks: [360, 360, 360, 360, 360] },
+      ],
+      ...changes,
+    });
+
+    it("o mês da campanha sugere a Meta black de cada setor pelo .env", async () => {
+      const month = (await request("GET", "/goals/2026-11", tokens.admin)).body.data;
+      assert.equal(month.black.active, true);
+      assert.deepEqual(month.black.suggestedGoals, { b2b: 6000, b2g: 3000 });
+      assert.equal((await request("GET", `/goals/${MONTH}`, tokens.admin)).body.data.black.active, false);
+    });
+
+    it("no mês da campanha a Meta black do setor é obrigatória e maior que a Super", async () => {
+      const put = (body) => request("PUT", "/goals/2026-11/b2b", tokens.admin, body);
+
+      assert.match((await put(novemberB2b({ blackGoal: null }))).body.error, /Meta black do setor precisa ser maior/);
+      assert.match((await put(novemberB2b({ blackGoal: 4000 }))).body.error, /Meta black do setor precisa ser maior/);
+      assert.equal((await put(novemberB2b())).status, 200);
+      assert.equal((await MonthlyGoal.findOne({ month: "2026-11" })).blackGoal, 5400);
+    });
+
+    it("fora do mês da campanha a Meta black não é gravada", async () => {
+      await request("PUT", `/goals/${MONTH}/b2b`, tokens.admin, { ...validB2b(), blackGoal: 99999 });
+      assert.equal((await MonthlyGoal.findOne({ month: MONTH })).blackGoal, null);
+    });
+
+    it("a Meta black do setor desce para renovação/vendas, para as pessoas e para as semanas", async () => {
+      await request("PUT", "/goals/2026-11/b2b", tokens.admin, novemberB2b());
+
+      const { data } = (await request("GET", "/goals/2026-11/progress", tokens.admin)).body;
+      const [b2b] = data.segments;
+      const a1 = data.people.find((person) => person.name === "Vendor A1");
+      const a2 = data.people.find((person) => person.name === "Vendor A2");
+
+      assert.equal(data.black.active, true);
+      assert.equal(b2b.blackGoal, 5400);
+      assert.deepEqual(b2b.month.tiers, { goal: 3000, super: 4000, black: 5400 });
+      assert.deepEqual(a1.month.tiers, { goal: 1200, super: 1600, black: 2160 });
+      assert.deepEqual(a2.month.tiers, { goal: 1800, super: 2400, black: 3240 });
+      assert.deepEqual(a1.weeks[0].tiers, { goal: 240, super: 320, black: 432 });
+      assert.deepEqual(a1.month.available, ["goal", "super", "black"]);
     });
   });
 
@@ -271,16 +346,18 @@ describe("Metas mensais (/goals)", () => {
 
       const a1 = data.people.find((person) => person.name === "Vendor A1");
       assert.equal(a1.month.realized, 5500);
+      assert.deepEqual(a1.month.tiers, { goal: 4000, super: 4800, black: 0 });
       assert.deepEqual(a1.month.reached, ["goal", "super"]);
-      assert.equal(a1.month.current, "black");
-      assert.equal(a1.month.remaining, 500);
+      assert.equal(a1.month.current, "super");
+      assert.equal(a1.month.excess, 700);
       assert.equal(a1.levelName, "Júnior");
       assert.deepEqual(
         a1.weeks.map((week) => week.realized),
         [3000, 2000, 0, 500],
       );
-      assert.equal(a1.weeks[0].current, "black");
-      assert.equal(a1.weeks[0].excess, 1500);
+      assert.equal(a1.weeks[0].current, "super");
+      assert.equal(a1.weeks[0].tiers.super, 1200);
+      assert.equal(a1.weeks[0].excess, 1800);
       assert.equal(a1.weeks[2].current, "goal");
       assert.equal(a1.cumulative.at(-1), 5500);
 
@@ -292,7 +369,8 @@ describe("Metas mensais (/goals)", () => {
       const [b2b] = data.segments;
       assert.equal(b2b.segment, "b2b");
       assert.equal(b2b.month.realized, 6500);
-      assert.deepEqual(b2b.month.tiers, { goal: 10000, super: 12000, black: 15000 });
+      assert.deepEqual(b2b.month.tiers, { goal: 10000, super: 12000, black: 0 });
+      assert.equal(data.black.active, false);
       assert.deepEqual(b2b.parts, { farm: { goal: 6000, realized: 1000 }, sales: { goal: 4000, realized: 5500 } });
       assert.equal(b2b.weeks[0].tiers.goal, 2500);
 
