@@ -46,3 +46,7 @@ exports.rotateToken = async (oldToken) => {
 exports.revokeAllTokens = async (userId) => {
   await Token.revokeAllTokens(userId);
 };
+
+exports.revokeToken = async (token) => {
+  await Token.revokeToken(token);
+};

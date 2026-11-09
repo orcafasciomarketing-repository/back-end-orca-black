@@ -29,7 +29,13 @@ exports.authMiddleware = async (req, res, next) => {
     if (!user) throw UnauthorizedError("Usuário não encontrado");
 
     req.token = validatedToken;
-    req.user = { id: user._id.toString(), email: user.email, role: getUserRole(user) };
+    req.user = {
+      id: user._id.toString(),
+      email: user.email,
+      role: getUserRole(user),
+      vendorId: user.vendorId ? user.vendorId.toString() : null,
+      sdrId: user.sdrId ? user.sdrId.toString() : null,
+    };
 
     next();
   } catch (err) {

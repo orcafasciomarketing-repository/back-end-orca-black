@@ -14,9 +14,11 @@ Erros passam pelo handler global e retornam `{ "error": "mensagem" }` com o stat
 |---|---|---|---|---|
 | POST | `/auth/login` | Pública | body | `loginUser` → `loginUser` |
 | POST | `/auth/refresh` | Pública (exige cookie) | cookie `refreshToken` | `refreshUserTokens` → `refreshUserTokens` |
-| GET | `/sales/admin` | **Privada** (JWT; b2b/b2g só o setor) | query `page`, `limit` | `getAllSales` → `findAll` |
+| POST | `/auth/logout` | Pública (usa o cookie, se houver) | cookie `refreshToken` | `logoutUser` → `logoutUser` |
+| POST | `/auth/change-password` | **Privada** (JWT; qualquer perfil, só a própria senha) | body | `changePassword` → `changePassword` |
+| GET | `/sales/admin` | **Privada** (JWT; b2b/b2g só o setor; vendor/sdr → 403) | query `page`, `limit` | `getAllSales` → `findAll` |
 | GET | `/sales/get` | Pública | query `page`, `limit` | `getWeekSales` → `findActiveByWeek` |
-| GET | `/sales/get/:vendorId` | **Privada** (JWT; b2b/b2g só o setor) | path `vendorId` | `getSalesByVendor` → `findByVendor` |
+| GET | `/sales/get/:vendorId` | **Privada** (JWT; b2b/b2g só o setor; vendor/sdr → 403) | path `vendorId` | `getSalesByVendor` → `findByVendor` |
 | GET | `/sales/events` | Pública | — | `getClient` (SSE) |
 | POST | `/sales/webhook/sheet` | Protegida por segredo | header `webhook_secret`, body | `sheetSaleEntry` → `sheetSalesProcess` |
 | POST | `/sales/import/preview` | **Só master** | body CSV (`text/csv`) | `previewImport` → `previewImport` |
@@ -30,15 +32,18 @@ Erros passam pelo handler global e retornam `{ "error": "mensagem" }` com o stat
 | GET | `/analytics/ranking/last-week` | Pública | query `vendorDepartment`, `segment` | `getLastWeekVendorRanking` → `getVendorRanking("lastWeek")` |
 | GET | `/analytics/sdr-ranking` | Pública | query `period`, `segment` | `getSdrRanking` → `getSdrRanking` |
 | GET | `/analytics/sdr-ranking/last-week` | Pública | query `segment` | `getLastWeekSdrRanking` → `getSdrRanking("lastWeek")` |
-| GET | `/analytics/forecast` | **Privada** (JWT; b2b/b2g só o setor) | query `segment` | `getForecast` → `getForecast` |
-| GET | `/analytics/points-history` | **Privada** (JWT; b2b/b2g só o setor) | query `segment` | `getPointsHistory` → `getPointsHistory` |
-| GET | `/analytics/people-points` | **Privada** (JWT; b2b/b2g só o setor) | query `period`, `segment`, `from`, `to` | `getPeoplePoints` → `getPeoplePoints` |
+| GET | `/analytics/forecast` | **Privada** (JWT; b2b/b2g só o setor; vendor/sdr → 403) | query `segment` | `getForecast` → `getForecast` |
+| GET | `/analytics/points-history` | **Privada** (JWT; b2b/b2g só o setor; vendor/sdr → 403) | query `segment` | `getPointsHistory` → `getPointsHistory` |
+| GET | `/analytics/people-points` | **Privada** (JWT; b2b/b2g só o setor; vendor/sdr → 403) | query `period`, `segment`, `from`, `to` | `getPeoplePoints` → `getPeoplePoints` |
 | POST | `/logs` | Pública (limite por IP) | body | `createLog` → `create` |
 | GET | `/logs` | **Só master** | — | `getLogs` → `findLatest` |
 | GET | `/users` | **Master e admin** | — | `getUsers` → `findAll` |
 | POST | `/users` | **Master e admin** | body | `createUser` → `createUser` |
 | PATCH | `/users/:id` | **Só master** | path `id`, body | `updateUser` → `updateUser` |
 | DELETE | `/users/:id` | **Só master** | path `id` | `deleteUser` → `deleteUser` |
+| GET | `/me` | **Só vendor e sdr** | — | `getProfile` → `getProfile` |
+| GET | `/me/sales` | **Só vendor e sdr** | — | `getSales` → `getSales` |
+| GET | `/me/team` | **Só vendor e sdr** | query `period` | `getTeam` → `getTeam` |
 | GET | `/public/*` | Pública (arquivos estáticos) | path do arquivo | — |
 
 **Rotas públicas** são as usadas pelas telas (TVs), que não fazem login. **Rotas privadas** são do admin.
@@ -67,6 +72,10 @@ O middleware busca o usuário no banco a cada requisição: o perfil vem do banc
 | `admin` | todas | `403` | liberado | `403` |
 | `b2b` | só `segment: "b2b"` (o filtro é no servidor) | `403` | `403` | `403` |
 | `b2g` | só `segment: "b2g"` | `403` | `403` | `403` |
+| `vendor` | `403` (só as próprias, em `/me/sales`) | `403` | `403` | `403` |
+| `sdr` | `403` (só as da própria passagem, em `/me/sales`) | `403` | `403` | `403` |
+
+- **`vendor` e `sdr` (colaboradores):** a conta fica ligada a um vendedor (`vendorId`) ou a uma pessoa de passagem (`sdrId`). Não entram em nenhuma rota do admin (`/sales/admin`, `/sales/get/:vendorId`, `/analytics/forecast`, `/analytics/points-history`, `/analytics/people-points`, `/users`, `/logs`, importação → `403`); só na área `/me`, onde a pessoa vem sempre do token (nunca da URL). Os outros perfis recebem `403` em `/me`. As rotas públicas das TVs continuam abertas para todos, como antes.
 
 - `master` não é gravado no banco: é o usuário com o e-mail da variável `MASTER_EMAIL` (sem diferença de maiúscula). O perfil gravado dele continua `admin`. Login, refresh e `GET /users` devolvem `role: "master"` para ele.
 - **Sem `MASTER_EMAIL` configurado, todo admin vale como master** (como era antes dos perfis), então um deploy antes de criar a variável não tranca ninguém para fora.
@@ -107,6 +116,28 @@ Gera um novo access token a partir do refresh token e renova o cookie.
 | `refreshToken` | cookie | Enviado automaticamente pelo navegador (o front precisa usar `credentials: "include"`). |
 
 **Resposta:** `200 { user, token }`
+
+### `POST /auth/logout` — Pública (usa o cookie)
+
+Encerra a sessão deste navegador: invalida o refresh token do cookie e apaga o cookie. Funciona mesmo com o access token vencido (não exige o header `Authorization`). As outras sessões da pessoa (outros navegadores) continuam. Sem cookie, ou com um token que já não vale, também responde `200`.
+
+**Resposta:** `200 { success: true, message: "Sessão encerrada" }`
+
+### `POST /auth/change-password` — Privada
+
+Qualquer perfil logado troca **a própria** senha: o usuário vem do token, não existe parâmetro para escolher outra pessoa.
+
+**Body** (`ChangePasswordSchema`, não aceita campos extras):
+
+| Campo | Tipo | Obrigatório | Descrição |
+|---|---|---|---|
+| `currentPassword` | string | sim | Senha atual. Errada → `400 Senha atual incorreta`. |
+| `password` | string | sim | Nova senha, no mínimo 6 caracteres. |
+| `passwordConfirmation` | string | sim | Igual a `password`, senão "Senhas são diferentes". |
+
+Derruba todas as sessões abertas da pessoa (refresh tokens revogados) e abre uma sessão nova para quem trocou: grava o cookie `refreshToken` novo e devolve um access token novo, então a pessoa continua logada neste navegador.
+
+**Resposta:** `200 { user, token, message: "Senha alterada" }`
 
 ---
 
@@ -623,19 +654,60 @@ Ver e cadastrar: `master` e `admin`. Trocar perfil/senha e excluir: só `master`
 | `email` | string | sim | E-mail válido. Convertido para minúsculas e sem espaços. |
 | `password` | string | sim | No mínimo 6 caracteres. |
 | `passwordConfirmation` | string | sim | Igual a `password`, senão "Senhas são diferentes". |
-| `role` | string | sim | `admin`, `b2b` ou `b2g` (`master` não existe no cadastro). |
+| `role` | string | sim | `admin`, `b2b`, `b2g`, `vendor` ou `sdr` (`master` não existe no cadastro). |
+| `vendorId` | string (id) | com `role: "vendor"` | Vendedor ligado à conta. |
+| `sdrId` | string (id) | com `role: "sdr"` | Pessoa de passagem ligada à conta. |
 
-**Resposta:** `201 data: { _id, email, role }`. E-mail já cadastrado → `409 Cadastro já realizado`. Admin cadastrando o e-mail do `MASTER_EMAIL` → `400 Este e-mail é reservado` (senão viraria master).
+**Resposta:** `201 data: { _id, email, role }` (+ `vendorId` ou `sdrId` nos colaboradores). E-mail já cadastrado → `409 Cadastro já realizado`. Colaborador sem a pessoa → `400`; pessoa que não existe → `400 Pessoa não encontrada`; pessoa que já tem conta → `409 Essa pessoa já tem uma conta`. Admin cadastrando o e-mail do `MASTER_EMAIL` → `400 Este e-mail é reservado` (senão viraria master).
 
 ### `PATCH /users/:id`
 
 **Body** (`UpdateUserSchema`): `role` e/ou `password` + `passwordConfirmation` (pelo menos um dos dois). Nova senha derruba as sessões abertas da pessoa (refresh tokens revogados).
+
+Ao trocar o `role` para `vendor`/`sdr`, mande também `vendorId`/`sdrId`; trocar para outro perfil tira a ligação com a pessoa.
 
 Ninguém muda o próprio perfil (`400`); o master troca a própria senha. Não dá para promover a `master` (o perfil não existe no schema → `400`). Usuário que não existe → `404`.
 
 ### `DELETE /users/:id`
 
 Exclui e revoga as sessões. A pessoa perde o acesso na hora. Ninguém se exclui (`400`). Usuário que não existe → `404`.
+
+---
+
+## Área do colaborador — `/me`
+
+Só para os perfis `vendor` e `sdr` (os outros → `403`, sem login → `401`). A pessoa vem do usuário logado: não existe parâmetro para pedir dados de outra pessoa. Se a pessoa ligada à conta foi apagada do cadastro → `404 Pessoa não encontrada`.
+
+### `GET /me`
+
+`data: { kind: "vendor" | "sdr", id, name, job, imageUrl, team: { teamId, teamName, teamShirt } }`
+
+### `GET /me/sales`
+
+Vendedor: as vendas dele (todas, inclusive canceladas, como em `/sales/get/:vendorId`). Passagem: as vendas em que ele está em `sdrIds`. `data: { data: [vendas populadas], total }`.
+
+### `GET /me/team`
+
+| Parâmetro | Onde | Valores | Descrição |
+|---|---|---|---|
+| `period` | query | `all` \| `week` \| `lastWeek` | Campanha (padrão), semana atual ou passada. Outro valor = `all`. |
+
+Mesma tabela de pontos do placar das TVs. **Só pontos, nenhum valor de venda.**
+
+```json
+{
+  "period": "all",
+  "team": { "position": 1, "teamId": "...", "teamName": "Orçawinx", "teamShirt": "...", "total": 15 },
+  "teams": [{ "position": 1, "teamId": "...", "teamName": "Orçawinx", "teamShirt": "...", "total": 15 }],
+  "people": [
+    { "position": 1, "personId": "...", "kind": "vendor", "name": "...", "job": "...", "imageUrl": "...",
+      "sales": 6, "farm": 0, "passage": 0, "total": 6, "isMe": true }
+  ]
+}
+```
+
+- `teams`: todos os times do maior para o menor (a posição do time da pessoa está em `team.position`).
+- `people`: só as pessoas do time da pessoa, do maior para o menor; `isMe` marca a própria pessoa.
 
 ---
 

@@ -1,6 +1,16 @@
 const zod = require("zod");
 
-const { ROLES } = require("../../../config/roles");
+const { ROLES, PERSON_ROLES } = require("../../../config/roles");
+
+const objectId = zod.string().regex(/^[0-9a-f]{24}$/i, "Pessoa inválida");
+
+// Perfil de colaborador precisa dizer qual pessoa é (vendedor ou passagem)
+const checkPersonLink = (obj, ctx) => {
+  const field = PERSON_ROLES[obj.role];
+  if (field && !obj[field]) {
+    ctx.addIssue({ path: [field], message: "Escolha a pessoa ligada a essa conta" });
+  }
+};
 
 const checkPasswordConfirmation = (obj, ctx) => {
   if (obj.password !== undefined && obj.password !== obj.passwordConfirmation) {
@@ -19,8 +29,13 @@ const CreateUserSchema = zod
     password: zod.coerce.string().min(6),
     passwordConfirmation: zod.coerce.string(),
     role: zod.enum(ROLES, { message: "Perfil inválido" }),
+    vendorId: objectId.optional(),
+    sdrId: objectId.optional(),
   })
-  .superRefine(checkPasswordConfirmation);
+  .superRefine((obj, ctx) => {
+    checkPasswordConfirmation(obj, ctx);
+    checkPersonLink(obj, ctx);
+  });
 
 // Troca de perfil e/ou nova senha
 const UpdateUserSchema = zod
@@ -28,12 +43,15 @@ const UpdateUserSchema = zod
     role: zod.enum(ROLES, { message: "Perfil inválido" }).optional(),
     password: zod.coerce.string().min(6).optional(),
     passwordConfirmation: zod.coerce.string().optional(),
+    vendorId: objectId.optional(),
+    sdrId: objectId.optional(),
   })
   .superRefine((obj, ctx) => {
     if (obj.role === undefined && obj.password === undefined) {
       ctx.addIssue({ path: ["role"], message: "Informe o perfil ou a nova senha" });
     }
     checkPasswordConfirmation(obj, ctx);
+    checkPersonLink(obj, ctx);
   });
 
 module.exports = { CreateUserSchema, UpdateUserSchema };

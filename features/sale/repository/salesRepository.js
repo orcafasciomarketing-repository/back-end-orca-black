@@ -66,6 +66,16 @@ exports.findByVendor = async (vendorId, segment) => {
   };
 };
 
+// Vendas em que a pessoa participou da passagem
+exports.findBySdr = async (sdrId) => {
+  const filter = { sdrIds: sdrId };
+  const query = Sales.find(filter).populate("vendorId").populate("sdrIds");
+  return {
+    data: await query,
+    total: await Sales.countDocuments(filter),
+  };
+};
+
 // Dados da planilha gravados na venda, com o status decidido pelo service
 const buildSaleUpdate = (sale, dealStatus) => {
   const update = {

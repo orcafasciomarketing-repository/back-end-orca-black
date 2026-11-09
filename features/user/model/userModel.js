@@ -23,6 +23,15 @@ const UserSchema = new Schema(
       enum: ROLES,
       default: "admin",
     },
+    // Só nos perfis de colaborador: a pessoa que essa conta representa
+    vendorId: {
+      type: Schema.Types.ObjectId,
+      ref: "Vendors",
+    },
+    sdrId: {
+      type: Schema.Types.ObjectId,
+      ref: "SDR",
+    },
   },
   { timestamps: true },
 );

@@ -5,6 +5,8 @@ const mongoose = require("mongoose");
 const Teams = require("./features/teams/model/teamsModel");
 const Vendors = require("./features/vendors/model/vendorsModel");
 const SDR = require("./features/sdr/model/sdrModel");
+const User = require("./features/user/model/userModel");
+const { hashPassword } = require("./features/security/service/passwordService");
 
 const MONGO_URI = process.env.MONGO_URI;
 
@@ -253,11 +255,12 @@ async function runSeed(data) {
     if (teamsCount > 0) {
       await updateImages(data);
       console.log("Banco já cadastrado: só as imagens foram atualizadas");
-      return;
+    } else {
+      await createTeams(data);
+      console.log("Times, vendedores e sdr cadastrados com sucesso");
     }
 
-    await createTeams(data);
-    console.log("Times, vendedores e sdr cadastrados com sucesso");
+    await createPersonUsers();
   } catch (err) {
     console.log(`Error: ${err}`);
     // Sai com erro: se o seed rodar no build do Render, o deploy falha em vez de seguir
@@ -325,4 +328,79 @@ async function createSdrBase(teamId, sdrs) {
   await SDR.insertMany(teamSdr);
 }
 
-runSeed(seedTeamData);
+// Sem acento e em minúsculas: "Vinícius Pereira" → ["vinicius", "pereira"]
+const nameParts = (name) =>
+  name
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase()
+    .split(/\s+/);
+
+// nome.sobrenome@orcafascio.com (só o nome, se a pessoa não tiver sobrenome)
+const personEmail = (name) => {
+  const parts = nameParts(name);
+  const local =
+    parts.length > 1 ? `${parts[0]}.${parts[parts.length - 1]}` : parts[0];
+  return `${local}@orcafascio.com`;
+};
+
+// Nome com a primeira letra maiúscula + 123: "Vinícius Pereira" → "Vinicius123"
+const personPassword = (name) => {
+  const [first] = nameParts(name);
+  return `${first.charAt(0).toUpperCase()}${first.slice(1)}123`;
+};
+
+// Conta de cada vendedor (perfil vendor) e de cada pessoa de passagem (perfil sdr).
+// Só cria o que falta: e-mail já cadastrado ou pessoa que já tem conta ficam como estão
+// (nunca troca senha nem perfil). Um erro aqui só avisa, não derruba o seed
+async function createPersonUsers() {
+  const people = [
+    ...seedVendorData.map((vendor) => ({
+      role: "vendor",
+      field: "vendorId",
+      model: Vendors,
+      filter: { vendorName: vendor.vendorName },
+      name: vendor.vendorName,
+    })),
+    ...seedSdrData.map((sdr) => ({
+      role: "sdr",
+      field: "sdrId",
+      model: SDR,
+      filter: { name: sdr.name },
+      name: sdr.name,
+    })),
+  ];
+  let created = 0;
+
+  for (const person of people) {
+    try {
+      const email = personEmail(person.name);
+      const record = await person.model.findOne(person.filter);
+      if (!record) continue;
+
+      const exists = await User.exists({
+        $or: [{ email }, { [person.field]: record._id }],
+      });
+      if (exists) continue;
+
+      await User.create({
+        email,
+        passwordHash: await hashPassword(personPassword(person.name)),
+        role: person.role,
+        [person.field]: record._id,
+      });
+      created += 1;
+    } catch (err) {
+      console.log(`Aviso: conta de ${person.name} não criada (${err.message})`);
+    }
+  }
+
+  console.log(`Contas de colaboradores criadas: ${created}`);
+}
+
+if (require.main === module) {
+  runSeed(seedTeamData);
+}
+
+module.exports = { personEmail, personPassword };

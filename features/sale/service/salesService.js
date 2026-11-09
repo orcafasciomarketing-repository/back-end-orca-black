@@ -42,6 +42,10 @@ exports.findByVendor = async (vendorId, segment) => {
   return await SalesRepository.findByVendor(vendorId, segment);
 };
 
+exports.findBySdr = async (sdrId) => {
+  return await SalesRepository.findBySdr(sdrId);
+};
+
 // Vendas ativas da semana atual, com paginação opcional (rota /sales/get)
 exports.findActiveByWeek = async (page, limit) => {
   const { startOfWeek, finalOfWeek } = getWeekRange();

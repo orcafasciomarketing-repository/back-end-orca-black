@@ -4,11 +4,15 @@ const authService = require("../service/authService");
 // o cookie entre domínios com sameSite "none", e "none" exige secure (https)
 const isProduction = process.env.NODE_ENV === "production";
 
+const cookieOptions = () => ({
+  httpOnly: true,
+  secure: isProduction,
+  sameSite: isProduction ? "none" : "lax",
+});
+
 function setRefreshTokenCookie(res, refreshToken, expiration) {
   res.cookie("refreshToken", refreshToken, {
-    httpOnly: true,
-    secure: isProduction,
-    sameSite: isProduction ? "none" : "lax",
+    ...cookieOptions(),
     expires: new Date(expiration),
   });
 }
@@ -25,4 +29,16 @@ exports.refreshUserTokens = async (req, res) => {
   const { token, refreshToken: newRefreshToken, expiration, user } = await authService.refreshUserTokens(refreshToken);
   setRefreshTokenCookie(res, newRefreshToken, expiration);
   res.status(200).json({ user, token });
+};
+
+exports.logoutUser = async (req, res) => {
+  await authService.logoutUser(req.cookies?.refreshToken);
+  res.clearCookie("refreshToken", cookieOptions());
+  res.status(200).json({ success: true, message: "Sessão encerrada" });
+};
+
+exports.changePassword = async (req, res) => {
+  const { user, token, refreshToken, expiration } = await authService.changePassword(req.user.id, req.data);
+  setRefreshTokenCookie(res, refreshToken, expiration);
+  res.status(200).json({ user, token, message: "Senha alterada" });
 };

@@ -3,6 +3,7 @@ const router = express.Router();
 
 const AnalyticsController = require("../controller/analyticsController");
 const { authMiddleware } = require("../../../middlewares/authMidleware");
+const { requireAdminArea } = require("../../../middlewares/roleMiddleware");
 
 router.get("/goal", AnalyticsController.getGoalProgress);
 router.get("/scoreboard", AnalyticsController.getScoreboard);
@@ -12,8 +13,8 @@ router.get("/ranking/last-week", AnalyticsController.getLastWeekVendorRanking);
 router.get("/sdr-ranking", AnalyticsController.getSdrRanking);
 router.get("/sdr-ranking/last-week", AnalyticsController.getLastWeekSdrRanking);
 // Forecast é do admin (qualquer perfil logado), não das TVs
-router.get("/forecast", authMiddleware, AnalyticsController.getForecast);
-router.get("/points-history", authMiddleware, AnalyticsController.getPointsHistory);
-router.get("/people-points", authMiddleware, AnalyticsController.getPeoplePoints);
+router.get("/forecast", authMiddleware, requireAdminArea, AnalyticsController.getForecast);
+router.get("/points-history", authMiddleware, requireAdminArea, AnalyticsController.getPointsHistory);
+router.get("/people-points", authMiddleware, requireAdminArea, AnalyticsController.getPeoplePoints);
 
 module.exports = router;

@@ -23,3 +23,7 @@ exports.replaceToken = async (oldToken, newToken) => {
 exports.revokeAllTokens = async (userId) => {
   return await Token.updateMany({ userId }, { $set: { revokedAt: new Date() } });
 };
+
+exports.revokeToken = async (token) => {
+  return await Token.updateOne({ token, revokedAt: null }, { $set: { revokedAt: new Date() } });
+};

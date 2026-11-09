@@ -1,0 +1,82 @@
+const VendorsService = require("../../vendors/service/vendorsService");
+const SdrService = require("../../sdr/service/sdrService");
+const TeamsService = require("../../teams/service/teamsService");
+const SalesService = require("../../sale/service/salesService");
+const AnalyticsService = require("../../analytics/service/analyticsService");
+const { NotFoundError } = require("../../../shared/errors");
+
+// Pessoa ligada à conta (vendedor ou passagem), já com o time.
+// Pessoa apagada do cadastro: 404 (a conta continua, mas sem área)
+const findPerson = async (user) => {
+  const person =
+    user.role === "vendor"
+      ? await VendorsService.findById(user.vendorId)
+      : await SdrService.findById(user.sdrId);
+  if (!person) throw NotFoundError("Pessoa não encontrada");
+
+  const team = person.teamId
+    ? await TeamsService.findById(person.teamId)
+    : null;
+
+  return {
+    kind: user.role,
+    id: person._id,
+    name: user.role === "vendor" ? person.vendorName : person.name,
+    job: person.job,
+    imageUrl: person.imageUrl,
+    team: team
+      ? { teamId: team._id, teamName: team.name, teamShirt: team.imageUrl }
+      : null,
+  };
+};
+
+exports.getProfile = findPerson;
+
+// Vendedor: as vendas dele. Passagem: as vendas em que ele participou da passagem
+exports.getSales = async (user) => {
+  await findPerson(user);
+  return user.role === "vendor"
+    ? await SalesService.findByVendor(user.vendorId)
+    : await SalesService.findBySdr(user.sdrId);
+};
+
+// Time da pessoa: posição entre os times e os pontos de cada colega (só pontos, nada de vendas)
+exports.getTeam = async (user, period) => {
+  const person = await findPerson(user);
+  const [scoreboard, peoplePoints] = await Promise.all([
+    AnalyticsService.getScoreboard(period),
+    AnalyticsService.getPeoplePoints({ period }),
+  ]);
+
+  const teamId = person.team ? String(person.team.teamId) : null;
+  const teams = scoreboard.map((team, index) => ({
+    position: index + 1,
+    teamId: team.teamId,
+    teamName: team.teamName,
+    teamShirt: team.teamShirt,
+    total: team.total,
+  }));
+
+  return {
+    period,
+    team: teams.find((team) => String(team.teamId) === teamId) ?? null,
+    teams,
+    people: peoplePoints.people
+      .filter((member) => teamId && String(member.teamId) === teamId)
+      .map((member, index) => ({
+        position: index + 1,
+        personId: member.personId,
+        kind: member.kind,
+        name: member.name,
+        job: member.job,
+        imageUrl: member.imageUrl,
+        sales: member.sales,
+        farm: member.farm,
+        passage: member.passage,
+        total: member.total,
+        isMe:
+          member.kind === person.kind &&
+          String(member.personId) === String(person.id),
+      })),
+  };
+};
