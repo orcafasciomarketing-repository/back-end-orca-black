@@ -12,6 +12,7 @@ const logsRoutes = require("./features/logs/routes/logsRoutes");
 const userRoutes = require("./features/user/routes/userRoutes");
 const meRoutes = require("./features/me/routes/meRoutes");
 const prizeRoutes = require("./features/prizes/routes/prizeRoutes");
+const monthlyGoalRoutes = require("./features/goals/routes/monthlyGoalRoutes");
 
 const app = express();
 
@@ -60,6 +61,7 @@ app.use("/logs", logsRoutes);
 app.use("/users", userRoutes);
 app.use("/me", meRoutes);
 app.use("/prizes", prizeRoutes);
+app.use("/goals", monthlyGoalRoutes);
 
 app.use((err, req, res, next) => {
   const status = err.status || 500;

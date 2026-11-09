@@ -45,6 +45,10 @@ Erros passam pelo handler global e retornam `{ "error": "mensagem" }` com o stat
 | GET | `/me/sales` | **Só vendor e sdr** | — | `getSales` → `getSales` |
 | GET | `/me/team` | **Só vendor e sdr** | query `period` | `getTeam` → `getTeam` |
 | GET | `/me/prizes` | **Só vendor e sdr** | — | `getPrizes` → `getPrizes` |
+| GET | `/goals/:month` | **Master e admin** | path `month` (AAAA-MM) | `getMonth` → `getMonth` |
+| GET | `/goals/:month/progress` | **Master e admin** | path `month` | `getProgress` → `getProgress` |
+| PUT | `/goals/:month/:segment` | **Master e admin** | path `month`, `segment`, body | `saveMonth` → `saveMonth` |
+| DELETE | `/goals/:month/:segment` | **Master e admin** | path `month`, `segment` | `deleteMonth` → `deleteMonth` |
 | GET | `/public/*` | Pública (arquivos estáticos) | path do arquivo | — |
 
 **Rotas públicas** são as usadas pelas telas (TVs), que não fazem login. **Rotas privadas** são do admin.
@@ -779,6 +783,76 @@ Histórico de retiradas, da mais recente para a mais antiga. Filtro opcional por
 Exclui um lançamento errado; o saldo se recalcula. Retirada que não existe → `404`.
 
 ---
+
+## Metas mensais — `/goals`
+
+Metas em R$ por setor, por vendedor e por semana, com três faixas (Meta, Super meta e Meta black). Regras em RN-69 a RN-73. **Fase de teste com o gestor: só `master` e `admin`** (b2b, b2g, vendor e sdr → `403`; sem login → `401`). Não mexe na meta das TVs (`BLACK_FRIDAY_GOAL*` do `.env`). Mês fora do formato `AAAA-MM` ou setor diferente de `b2b`/`b2g` → `400`.
+
+### `GET /goals/:month`
+
+Para a tela de cadastro.
+
+```json
+{
+  "month": "2026-11",
+  "weeks": [{ "index": 0, "start": "2026-11-02", "end": "2026-11-08" }],
+  "segments": {
+    "b2b": {
+      "config": { "month": "2026-11", "goal": 120000, "farmPercent": 40, "superPercent": 120, "blackPercent": 150,
+        "levels": [{ "key": "junior", "name": "Júnior", "weight": 1 }],
+        "people": [{ "vendorId": "...", "type": "sales", "level": "junior", "goal": 9000, "weeks": [1800, 1800, 1800, 1800, 1800] }],
+        "updatedBy": "admin@...", "updatedAt": "..." },
+      "previous": null,
+      "vendors": [{ "vendorId": "...", "name": "...", "job": "B2B Venda", "imageUrl": "...", "teamId": "...", "teamName": "...", "type": "sales" }]
+    },
+    "b2g": { "config": null, "previous": { "month": "2026-10", "...": "..." }, "vendors": [] }
+  }
+}
+```
+
+- `weeks`: semanas (segunda a domingo) que **começam** no mês; a última pode terminar no mês seguinte.
+- `config`: o que está salvo (ou `null`). `previous`: sem `config`, o último mês salvo antes deste, para a tela copiar.
+- `vendors`: vendedores do setor pelo cargo (`"B2B ..."` / `"B2G ..."`); `type` = `farm` se o cargo tem "Farmer", senão `sales`.
+
+### `PUT /goals/:month/:segment`
+
+Body (`strictObject`): `{ goal, farmPercent, superPercent, blackPercent, levels: [{ key, name, weight }], people: [{ vendorId, level, goal, weeks: [...] }] }`. Substitui o mês inteiro daquele setor (os outros meses não mudam). Só salva quando tudo fecha (senão `400` com a mensagem):
+
+- `goal` > 0; `farmPercent` de 0 a 100; `superPercent` > 100; `blackPercent` > `superPercent`; pelo menos um nível, com peso > 0 e chave única;
+- cada vendedor existe, é do setor, aparece uma vez e tem um nível válido;
+- uma meta por semana do mês, e a soma das semanas = a meta mensal do vendedor (no centavo);
+- a soma das metas dos Farmers = `goal × farmPercent%` e a dos outros = o resto (no centavo). Ex.: `"Renovação: distribuído R$ 40.000,00 de R$ 48.000,00"`.
+
+Responde o `config` salvo, com `updatedBy` = e-mail de quem salvou.
+
+### `DELETE /goals/:month/:segment`
+
+Exclui o mês daquele setor. Não existe → `404`.
+
+### `GET /goals/:month/progress`
+
+Progresso do mês (vendas `ativa`, pelo `realizedAt` no horário de São Paulo, dentro das semanas do mês). Cada vendedor conta só as vendas dele do tipo do cargo (`farm` ou `sales`).
+
+```json
+{
+  "month": "2026-11", "today": "2026-11-09", "weeks": [], "days": ["2026-11-02", "..."],
+  "segments": [{ "segment": "b2b", "goal": 120000, "farmPercent": 40, "superPercent": 120, "blackPercent": 150,
+    "parts": { "farm": { "goal": 48000, "realized": 3500 }, "sales": { "goal": 72000, "realized": 44500 } },
+    "month": "<progresso>", "weeks": ["<progresso da semana>"], "cumulative": [0, 1200] }],
+  "people": [{ "vendorId": "...", "segment": "b2b", "type": "sales", "name": "...", "job": "...", "imageUrl": "...",
+    "teamId": "...", "teamName": "...", "level": "junior", "levelName": "Júnior",
+    "month": "<progresso>", "weeks": ["<progresso da semana>"], "cumulative": [] }],
+  "teams": [{ "teamId": "...", "teamName": "...", "imageUrl": "...", "members": 4, "month": "<progresso>", "cumulative": [] }],
+  "summary": { "people": 11, "reachedGoal": 3, "reachedSuper": 3, "reachedBlack": 2, "onPace": 4, "behind": 7 }
+}
+```
+
+`<progresso>`: `{ realized, tiers: { goal, super, black }, reached: ["goal", ...], current: "goal" | "super" | "black", target, percent, remaining, excess, pace: { totalDays, elapsedDays, remainingDays, expected, status: "done" | "ahead" | "behind" | "upcoming", neededPerDay, projection } }`.
+
+- `current`: a primeira faixa ainda não batida; bateu as três, fica `black` e o que passou dela vai em `excess`. `percent` é do `target` (a faixa atual).
+- `pace` é em relação à Meta (faixa normal): `expected` = quanto já deveria ter até hoje; `neededPerDay` = quanto falta ÷ dias que faltam; `projection` = ritmo atual até o fim.
+- `people` vem do mais perto para o mais longe da Meta; `teams` = soma das pessoas de cada time; `cumulative` = acumulado por dia (`days`).
+- Mês sem meta: listas vazias e `summary` zerado.
 
 ## Arquivos estáticos — `/public`
 
