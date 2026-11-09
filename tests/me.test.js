@@ -6,6 +6,7 @@ process.env.ROUND_ENCRYPTION = "4";
 const { startTestApp, seedBase, clearDatabase, createUserToken, TEST_POINTS } = require("./helpers/testApp");
 
 const Sales = require("../features/sale/model/salesModel");
+const PrizeWithdrawal = require("../features/prizes/model/prizeWithdrawalModel");
 const User = require("../features/user/model/userModel");
 const { generateAccessToken } = require("../shared/accessTokenService");
 const { personEmail, personPassword } = require("../seed");
@@ -209,6 +210,45 @@ describe("Área do colaborador (/me) e perfis vendor e sdr", () => {
       assert.equal((await request("GET", "/me/team?period=lastWeek", tokens.vendorA1)).body.data.period, "lastWeek");
       assert.equal((await request("GET", "/me/team?period=x", tokens.vendorA1)).body.data.period, "all");
       assert.equal((await request("GET", "/me/team?period=lastWeek", tokens.vendorA1)).body.data.team.total, 0);
+    });
+  });
+
+  describe("GET /me/prizes", () => {
+    it("pontos acumulados e prêmios retirados da própria pessoa, iguais aos de /prizes", async () => {
+      await PrizeWithdrawal.deleteMany({});
+      await PrizeWithdrawal.create([
+        { personId: seed.vendorA1._id, kind: "vendor", quantity: 2, withdrawnAt: "2026-11-02" },
+        { personId: seed.vendorA1._id, kind: "vendor", quantity: 1, withdrawnAt: "2026-11-09" },
+        { personId: seed.vendorB1._id, kind: "vendor", quantity: 5, withdrawnAt: "2026-11-09" },
+      ]);
+
+      const [{ status, body }, admin] = await Promise.all([
+        request("GET", "/me/prizes", tokens.vendorA1),
+        request("GET", "/prizes", tokens.admin),
+      ]);
+      const fromAdmin = admin.body.data.people.find((person) => String(person.personId) === String(seed.vendorA1._id));
+
+      assert.equal(status, 200);
+      assert.equal(body.data.accumulated, TEST_POINTS.b2bSale + TEST_POINTS.b2gFarm);
+      assert.equal(body.data.withdrawn, 3);
+      assert.equal(body.data.accumulated, fromAdmin.accumulated);
+      assert.equal(body.data.balance, fromAdmin.balance);
+      assert.equal(body.data.pointsToNext, fromAdmin.pointsToNext);
+    });
+
+    it("passagem também recebe; quem nunca retirou tem 0", async () => {
+      await PrizeWithdrawal.deleteMany({});
+
+      const { status, body } = await request("GET", "/me/prizes", tokens.sdrB);
+
+      assert.equal(status, 200);
+      assert.equal(body.data.withdrawn, 0);
+      assert.equal(typeof body.data.accumulated, "number");
+    });
+
+    it("perfis do admin → 403; sem login → 401", async () => {
+      assert.equal((await request("GET", "/me/prizes", tokens.admin)).status, 403);
+      assert.equal((await request("GET", "/me/prizes", undefined)).status, 401);
     });
   });
 

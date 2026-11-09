@@ -3,6 +3,9 @@ const SdrService = require("../../sdr/service/sdrService");
 const TeamsService = require("../../teams/service/teamsService");
 const SalesService = require("../../sale/service/salesService");
 const AnalyticsService = require("../../analytics/service/analyticsService");
+const PrizeService = require("../../prizes/service/prizeService");
+const { buildPrizeBalance } = require("../../prizes/service/prizeCalculator");
+const { PRIZE_POINTS_STEP } = require("../../../config/prizes");
 const { NotFoundError } = require("../../../shared/errors");
 
 // Pessoa ligada à conta (vendedor ou passagem), já com o time.
@@ -78,5 +81,25 @@ exports.getTeam = async (user, period) => {
           member.kind === person.kind &&
           String(member.personId) === String(person.id),
       })),
+  };
+};
+
+// Prêmios da própria pessoa: o mesmo cálculo da tela de prêmios do admin (RN-66 e RN-67)
+exports.getPrizes = async (user) => {
+  const person = await findPerson(user);
+  const summary = await PrizeService.getSummary(null);
+  const mine = summary.people.find(
+    (item) => item.kind === person.kind && String(item.personId) === String(person.id),
+  );
+  const balance = mine ?? buildPrizeBalance({ accumulated: 0, step: PRIZE_POINTS_STEP });
+
+  return {
+    step: summary.step,
+    accumulated: balance.accumulated,
+    currentWeek: balance.currentWeek,
+    earned: balance.earned,
+    withdrawn: balance.withdrawn,
+    balance: balance.balance,
+    pointsToNext: balance.pointsToNext,
   };
 };

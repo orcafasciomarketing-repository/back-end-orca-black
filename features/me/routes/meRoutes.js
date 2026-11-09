@@ -11,5 +11,6 @@ router.use(authMiddleware, requirePerson);
 router.get("/", MeController.getProfile);
 router.get("/sales", MeController.getSales);
 router.get("/team", MeController.getTeam);
+router.get("/prizes", MeController.getPrizes);
 
 module.exports = router;

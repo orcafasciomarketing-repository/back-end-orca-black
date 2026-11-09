@@ -25,3 +25,10 @@ exports.getTeam = async (req, res, next) => {
     .status(200)
     .json({ success: true, data, message: "Time recuperado com sucesso" });
 };
+
+exports.getPrizes = async (req, res, next) => {
+  const data = await MeService.getPrizes(req.user);
+  return res
+    .status(200)
+    .json({ success: true, data, message: "Prêmios recuperados com sucesso" });
+};

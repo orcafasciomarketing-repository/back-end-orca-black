@@ -44,6 +44,7 @@ Erros passam pelo handler global e retornam `{ "error": "mensagem" }` com o stat
 | GET | `/me` | **Só vendor e sdr** | — | `getProfile` → `getProfile` |
 | GET | `/me/sales` | **Só vendor e sdr** | — | `getSales` → `getSales` |
 | GET | `/me/team` | **Só vendor e sdr** | query `period` | `getTeam` → `getTeam` |
+| GET | `/me/prizes` | **Só vendor e sdr** | — | `getPrizes` → `getPrizes` |
 | GET | `/public/*` | Pública (arquivos estáticos) | path do arquivo | — |
 
 **Rotas públicas** são as usadas pelas telas (TVs), que não fazem login. **Rotas privadas** são do admin.
@@ -708,6 +709,18 @@ Mesma tabela de pontos do placar das TVs. **Só pontos, nenhum valor de venda.**
 
 - `teams`: todos os times do maior para o menor (a posição do time da pessoa está em `team.position`).
 - `people`: só as pessoas do time da pessoa, do maior para o menor; `isMe` marca a própria pessoa.
+
+### `GET /me/prizes`
+
+Os prêmios da própria pessoa, com o mesmo cálculo de `GET /prizes` (RN-66 e RN-67).
+
+```json
+{ "step": 10, "accumulated": 26, "currentWeek": 6, "earned": 2, "withdrawn": 2, "balance": 0, "pointsToNext": 4 }
+```
+
+- `accumulated`: todos os pontos até agora (de todos os setores, inclusive a semana em andamento).
+- `withdrawn`: soma dos prêmios já retirados (registrados pelo master).
+- `earned` / `balance` / `pointsToNext`: direitos, saldo (pode ficar negativo) e quanto falta para o próximo prêmio.
 
 ---
 
