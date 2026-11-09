@@ -259,8 +259,6 @@ async function runSeed(data) {
       await createTeams(data);
       console.log("Times, vendedores e sdr cadastrados com sucesso");
     }
-
-    await createPersonUsers();
   } catch (err) {
     console.log(`Error: ${err}`);
     // Sai com erro: se o seed rodar no build do Render, o deploy falha em vez de seguir
@@ -391,6 +389,7 @@ async function createPersonUsers() {
         [person.field]: record._id,
       });
       created += 1;
+      console.log(`Conta criada: ${email}`);
     } catch (err) {
       console.log(`Aviso: conta de ${person.name} não criada (${err.message})`);
     }
@@ -399,8 +398,28 @@ async function createPersonUsers() {
   console.log(`Contas de colaboradores criadas: ${created}`);
 }
 
+// Fora do deploy: cada senha passa pelo bcrypt (lento de propósito), e criar todas as
+// contas no "node seed.js && node index.js" do Render atrasava a subida do servidor.
+// Rodar uma vez, à mão: node seed.js --contas
+async function runPersonUsersSeed() {
+  try {
+    await mongoose.connect(MONGO_URI);
+    await createPersonUsers();
+  } catch (err) {
+    console.log(`Error: ${err}`);
+    process.exitCode = 1;
+  } finally {
+    mongoose.connection.close();
+    console.log("Conexão fechada.");
+  }
+}
+
 if (require.main === module) {
-  runSeed(seedTeamData);
+  if (process.argv.includes("--contas")) {
+    runPersonUsersSeed();
+  } else {
+    runSeed(seedTeamData);
+  }
 }
 
 module.exports = { personEmail, personPassword };

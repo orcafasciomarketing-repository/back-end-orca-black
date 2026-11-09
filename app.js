@@ -11,6 +11,7 @@ const sdrRoutes = require("./features/sdr/routes/sdrRoutes");
 const logsRoutes = require("./features/logs/routes/logsRoutes");
 const userRoutes = require("./features/user/routes/userRoutes");
 const meRoutes = require("./features/me/routes/meRoutes");
+const prizeRoutes = require("./features/prizes/routes/prizeRoutes");
 
 const app = express();
 
@@ -58,6 +59,7 @@ app.use("/analytics", analyticsRoutes);
 app.use("/logs", logsRoutes);
 app.use("/users", userRoutes);
 app.use("/me", meRoutes);
+app.use("/prizes", prizeRoutes);
 
 app.use((err, req, res, next) => {
   const status = err.status || 500;
