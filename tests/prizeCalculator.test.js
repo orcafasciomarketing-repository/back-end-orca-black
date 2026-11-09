@@ -40,38 +40,33 @@ describe("prizeCalculator", () => {
     assert.equal(buildPrizeBalance({ accumulated: 20, withdrawn: 1, step: STEP }).balance, 1);
   });
 
-  it("faltam para o próximo: conta a semana em andamento, mas o direito só vem quando ela fecha", () => {
-    const balance = buildPrizeBalance({ accumulated: 12, currentWeek: 3, step: STEP });
-    assert.equal(balance.earned, 1);
-    assert.equal(balance.nextPrizeAt, 20);
-    assert.equal(balance.pointsToNext, 5);
-
-    // A semana em andamento já passou do próximo prêmio: faltam 0, mas o direito ainda é 1
-    const ahead = buildPrizeBalance({ accumulated: 12, currentWeek: 30, step: STEP });
-    assert.equal(ahead.earned, 1);
-    assert.equal(ahead.pointsToNext, 0);
+  it("a semana em andamento conta: 18 pontos antes + 2 nesta semana = 20, 2 prêmios já", () => {
+    const balance = buildPrizeBalance({ accumulated: 20, currentWeek: 2, step: STEP });
+    assert.equal(balance.earned, 2);
+    assert.equal(balance.balance, 2);
+    assert.equal(balance.currentWeek, 2);
+    assert.equal(balance.nextPrizeAt, 30);
+    assert.equal(balance.pointsToNext, 10);
   });
 
   it("semana de segunda a domingo, no horário de São Paulo", () => {
-    // Segunda 09/11: a semana passada fechou no domingo 08/11
     assert.deepEqual(prizeWeekOf(new Date("2026-11-09T12:00:00Z")), {
       today: "2026-11-09",
       start: "2026-11-09",
       end: "2026-11-15",
-      closedUntil: "2026-11-08",
     });
 
     // Domingo 15/11 ainda é a mesma semana
     assert.equal(prizeWeekOf(new Date("2026-11-15T20:00:00Z")).start, "2026-11-09");
 
     // 01:00 UTC de segunda 16/11 ainda é domingo 22:00 em São Paulo
-    assert.equal(prizeWeekOf(new Date("2026-11-16T01:00:00Z")).closedUntil, "2026-11-08");
+    assert.equal(prizeWeekOf(new Date("2026-11-16T01:00:00Z")).start, "2026-11-09");
   });
 
   it("resumo: junta as retiradas de cada pessoa e põe quem tem mais saldo primeiro", () => {
     const person = (kind, personId, name, total) => ({ kind, personId, name, job: "x", total });
     const people = buildPrizeSummary({
-      closedPeople: [person("vendor", "1", "Ana", 25), person("sdr", "1", "Bia", 32), person("vendor", "2", "Caio", 4)],
+      allPeople: [person("vendor", "1", "Ana", 25), person("sdr", "1", "Bia", 32), person("vendor", "2", "Caio", 4)],
       currentPeople: [person("vendor", "1", "Ana", 2), person("sdr", "1", "Bia", 0), person("vendor", "2", "Caio", 1)],
       // Mesmo id em coleções diferentes: as retiradas da Ana não podem cair na Bia
       withdrawals: [

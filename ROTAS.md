@@ -713,7 +713,7 @@ Mesma tabela de pontos do placar das TVs. **Só pontos, nenhum valor de venda.**
 
 ## Prêmios — `/prizes`
 
-A cada `PRIZE_POINTS_STEP` pontos (padrão 10) a pessoa ganha 1 prêmio. Vendedores e pessoas de passagem (SDR, CS, Suporte), com os pontos de `/analytics/people-points`, de todos os setores. Só contam as semanas fechadas (até o último domingo); os pontos são cumulativos. Regras em RN-66 a RN-68.
+A cada `PRIZE_POINTS_STEP` pontos (padrão 10) a pessoa ganha 1 prêmio. Vendedores e pessoas de passagem (SDR, CS, Suporte), com os pontos de `/analytics/people-points`, de todos os setores. Os pontos são cumulativos e contam todos até agora, inclusive os da semana em andamento. Regras em RN-66 a RN-68.
 
 Ver: `master`, `admin`, `b2b`, `b2g` (b2b/b2g só as pessoas com cargo do setor; CS e Suporte só para master e admin). Registrar e excluir: só `master` (os outros → `403`). Sem login → `401`.
 
@@ -728,20 +728,19 @@ Ver: `master`, `admin`, `b2b`, `b2g` (b2b/b2g só as pessoas com cargo do setor;
   "segment": null,
   "step": 10,
   "today": "2026-11-09",
-  "closedUntil": "2026-11-08",
   "currentWeek": { "start": "2026-11-09", "end": "2026-11-15" },
   "teams": [{ "teamId": "...", "teamName": "...", "teamShirt": "..." }],
   "people": [
     { "personId": "...", "kind": "vendor", "name": "...", "job": "B2B Venda", "imageUrl": "...", "teamId": "...",
-      "accumulated": 12, "currentWeek": 3, "earned": 1, "withdrawn": 0, "balance": 1,
+      "accumulated": 15, "currentWeek": 3, "earned": 1, "withdrawn": 0, "balance": 1,
       "debtPoints": 0, "nextPrizeAt": 20, "pointsToNext": 5 }
   ]
 }
 ```
 
-- `accumulated`: pontos das semanas fechadas. `currentWeek`: pontos da semana em andamento (não dão direito ainda).
+- `accumulated`: todos os pontos até agora, inclusive a semana em andamento. `currentWeek`: só os pontos da semana em andamento (informação; já estão no `accumulated`).
 - `earned` = `accumulated ÷ step` (para baixo). `balance` = `earned − withdrawn` (negativo = devendo; `debtPoints` diz quantos pontos).
-- `pointsToNext`: quanto falta para o próximo prêmio, já contando a semana em andamento.
+- `pointsToNext`: quanto falta para o próximo prêmio.
 - Ordem: maior saldo primeiro, depois mais pontos, depois nome.
 
 ### `GET /prizes/withdrawals`

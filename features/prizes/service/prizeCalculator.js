@@ -2,7 +2,8 @@
 // então dá para testar as regras com números exatos.
 //
 // Regras:
-// - pontos acumulados = todos os pontos das semanas já fechadas (até o último domingo);
+// - pontos acumulados = todos os pontos até agora, inclusive os da semana em andamento
+//   (os prêmios são entregues na segunda e contam o que a pessoa já fez);
 // - direitos = acumulados ÷ passo (arredondado para baixo): a sobra passa para as semanas seguintes;
 // - saldo = direitos − retirados. Fica negativo quando uma venda é cancelada depois da retirada:
 //   o prêmio retirado continua contando, então a venda nova só "paga a dívida"
@@ -19,17 +20,17 @@ const addDays = (day, amount) => {
   return date.toISOString().slice(0, 10);
 };
 
-// Semana em andamento (segunda a domingo) e o último domingo, que fecha as semanas que já contam
+// Semana em andamento (segunda a domingo): só para mostrar quanto a pessoa fez nesta semana
 const prizeWeekOf = (now = new Date()) => {
   const today = dayKeyOf(now);
   const weekDay = new Date(`${today}T00:00:00Z`).getUTCDay();
   const start = addDays(today, -((weekDay || 7) - 1));
-  return { today, start, end: addDays(start, 6), closedUntil: addDays(start, -1) };
+  return { today, start, end: addDays(start, 6) };
 };
 
 const personKeyOf = (kind, personId) => `${kind}-${String(personId)}`;
 
-// Saldo de uma pessoa
+// Saldo de uma pessoa. accumulated já inclui a semana em andamento; currentWeek é só informação
 const buildPrizeBalance = ({ accumulated, currentWeek = 0, withdrawn = 0, step }) => {
   const earned = Math.floor(accumulated / step);
   // Próximo prêmio: depois dos direitos já ganhos ou, se está devendo, depois dos já retirados
@@ -43,14 +44,13 @@ const buildPrizeBalance = ({ accumulated, currentWeek = 0, withdrawn = 0, step }
     balance: earned - withdrawn,
     debtPoints: Math.max(withdrawn * step - accumulated, 0),
     nextPrizeAt,
-    // Contando a semana em andamento (o direito só aparece quando ela fechar)
-    pointsToNext: Math.max(nextPrizeAt - accumulated - currentWeek, 0),
+    pointsToNext: nextPrizeAt - accumulated,
   };
 };
 
-// closedPeople / currentPeople: as listas de pessoas do getPeoplePoints (até o último domingo e
-// da semana em andamento); withdrawals: as retiradas ({ personId, kind, quantity })
-const buildPrizeSummary = ({ closedPeople, currentPeople, withdrawals, step }) => {
+// allPeople / currentPeople: as listas de pessoas do getPeoplePoints (todos os pontos e só os da
+// semana em andamento); withdrawals: as retiradas ({ personId, kind, quantity })
+const buildPrizeSummary = ({ allPeople, currentPeople, withdrawals, step }) => {
   const currentByKey = new Map(currentPeople.map((person) => [personKeyOf(person.kind, person.personId), person.total]));
 
   const withdrawnByKey = new Map();
@@ -59,7 +59,7 @@ const buildPrizeSummary = ({ closedPeople, currentPeople, withdrawals, step }) =
     withdrawnByKey.set(key, (withdrawnByKey.get(key) ?? 0) + withdrawal.quantity);
   }
 
-  return closedPeople
+  return allPeople
     .map((person) => {
       const key = personKeyOf(person.kind, person.personId);
       return {

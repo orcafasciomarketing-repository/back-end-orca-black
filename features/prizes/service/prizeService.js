@@ -23,14 +23,14 @@ const withdrawalsPlural = (amount) => `${amount} ${Math.abs(amount) === 1 ? "pr�
 // o prêmio é da pessoa, não do setor da venda
 exports.getSummary = async (segment = null, now = new Date()) => {
   const week = prizeWeekOf(now);
-  const [closed, current, withdrawals] = await Promise.all([
-    AnalyticsService.getPeoplePoints({ to: week.closedUntil }),
+  const [all, current, withdrawals] = await Promise.all([
+    AnalyticsService.getPeoplePoints(),
     AnalyticsService.getPeoplePoints({ from: week.start }),
     PrizeRepository.findAll(),
   ]);
 
   const people = buildPrizeSummary({
-    closedPeople: closed.people,
+    allPeople: all.people,
     currentPeople: current.people,
     withdrawals,
     step: PRIZE_POINTS_STEP,
@@ -40,9 +40,8 @@ exports.getSummary = async (segment = null, now = new Date()) => {
     segment,
     step: PRIZE_POINTS_STEP,
     today: week.today,
-    closedUntil: week.closedUntil,
     currentWeek: { start: week.start, end: week.end },
-    teams: closed.teams,
+    teams: all.teams,
     people,
   };
 };

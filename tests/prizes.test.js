@@ -19,7 +19,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const addDays = (day, amount) => new Date(new Date(`${day}T12:00:00Z`).getTime() + amount * DAY_MS).toISOString().slice(0, 10);
 const today = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date());
 const monday = addDays(today, -((new Date(`${today}T12:00:00Z`).getUTCDay() || 7) - 1));
-// Um dia da semana passada (já fechada) e um da semana em andamento
+// Um dia da semana passada e um da semana em andamento (os dois contam)
 const lastWeekDay = addDays(monday, -3);
 const midnightOf = (day) => new Date(`${day}T03:00:00.000Z`);
 
@@ -57,7 +57,7 @@ describe("Prêmios (/prizes)", () => {
       ...extra,
     });
 
-    // Vendor A1: 4 vendas B2B na semana passada (12 pontos) + 1 nesta semana (3, em andamento).
+    // Vendor A1: 4 vendas B2B na semana passada (12 pontos) + 1 nesta semana (3): 15 pontos.
     // SDR B: 4 passagens (4 pontos). CS B: 2 passagens (14 pontos)
     await Sales.create([
       buildSale("a1-1", seed.vendorA1, "b2b", lastWeekDay, { sdrIds: [seed.sdrB._id, seed.csB._id] }),
@@ -101,16 +101,15 @@ describe("Prêmios (/prizes)", () => {
     assert.equal(status, 401);
   });
 
-  it("admin vê todo mundo: pontos das semanas fechadas, semana em andamento, direitos e saldo", async () => {
+  it("admin vê todo mundo: pontos acumulados (com a semana em andamento), direitos e saldo", async () => {
     const { status, body } = await getSummary(tokens.admin);
 
     assert.equal(status, 200);
     assert.equal(body.data.step, 10);
     assert.equal(body.data.currentWeek.start, monday);
-    assert.equal(body.data.closedUntil, addDays(monday, -1));
 
     const vendorA1 = personOf(body, "Vendor A1");
-    assert.equal(vendorA1.accumulated, 4 * TEST_POINTS.b2bSale);
+    assert.equal(vendorA1.accumulated, 5 * TEST_POINTS.b2bSale);
     assert.equal(vendorA1.currentWeek, TEST_POINTS.b2bSale);
     assert.equal(vendorA1.earned, 1);
     assert.equal(vendorA1.balance, 1);
@@ -202,8 +201,8 @@ describe("Prêmios (/prizes)", () => {
   });
 
   it("venda cancelada depois da retirada: fica devendo; a venda nova só zera o saldo", async () => {
-    // Vendor A1 já retirou 1 (teste anterior). Cancela uma venda de 3 pontos: 9 pontos, devendo 1
-    await Sales.updateOne({ rdDealId: "a1-1" }, { dealStatus: "cancelada" });
+    // Vendor A1 já retirou 1 (teste anterior). Cancela duas vendas de 3 pontos: 9 pontos, devendo 1
+    await Sales.updateMany({ rdDealId: { $in: ["a1-1", "a1-2"] } }, { dealStatus: "cancelada" });
     let vendorA1 = personOf((await getSummary(tokens.admin)).body, "Vendor A1");
     assert.equal(vendorA1.earned, 0);
     assert.equal(vendorA1.balance, -1);
@@ -227,8 +226,8 @@ describe("Prêmios (/prizes)", () => {
   });
 
   it("histórico: retiradas com o nome; b2b vê as do setor e b2g não vê as do B2B", async () => {
-    // A venda cancelada no teste anterior também tirou a passagem do CS B (ficou com 7 pontos, sem
-    // saldo): a retirada dele precisa da confirmação
+    // As vendas canceladas no teste anterior também tiraram as passagens do CS B (ficou sem pontos):
+    // a retirada dele precisa da confirmação
     const csB = await SDR.findOne({ name: "CS B" });
     const csWithdrawal = await request(
       "POST",
