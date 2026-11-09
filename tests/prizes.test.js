@@ -91,7 +91,6 @@ describe("Prêmios (/prizes)", () => {
     personId: String(person._id),
     kind: "vendor",
     quantity: 1,
-    prize: "Fone JBL",
     withdrawnAt: monday,
     ...extra,
   });
@@ -149,9 +148,11 @@ describe("Prêmios (/prizes)", () => {
     assert.equal(await PrizeWithdrawal.countDocuments(), 0);
   });
 
-  it("recusa retirada sem prêmio, com quantidade 0, data inválida ou pessoa que não existe", async () => {
+  it("recusa quantidade 0, data inválida, campo a mais ou pessoa que não existe", async () => {
     const cases = [
-      [{ prize: "  " }, 400],
+      [{ quantity: 1.5 }, 400],
+      // O prêmio em si não é cadastrado: campo a mais é recusado
+      [{ prize: "Fone JBL" }, 400],
       [{ quantity: 0 }, 400],
       [{ withdrawnAt: "2026-02-30" }, 400],
       [{ kind: "outro" }, 400],
@@ -170,7 +171,8 @@ describe("Prêmios (/prizes)", () => {
   it("registra a retirada e o saldo cai; acima do saldo pede confirmação (409) e com ela registra", async () => {
     const first = await request("POST", "/prizes/withdrawals", tokens.master, withdrawalFor(seed.vendorA1));
     assert.equal(first.status, 201);
-    assert.equal(first.body.data.prize, "Fone JBL");
+    assert.equal(first.body.data.quantity, 1);
+    assert.equal(first.body.data.withdrawnAt, monday);
     assert.equal(first.body.data.createdBy, "master@teste.com");
     assert.equal(personOf((await getSummary(tokens.admin)).body, "Vendor A1").balance, 0);
 
@@ -233,15 +235,15 @@ describe("Prêmios (/prizes)", () => {
       "POST",
       "/prizes/withdrawals",
       tokens.master,
-      withdrawalFor(csB, { kind: "sdr", prize: "Caneca", confirmOverBalance: true }),
+      withdrawalFor(csB, { kind: "sdr", quantity: 2, confirmOverBalance: true }),
     );
     assert.equal(csWithdrawal.status, 201);
 
     const all = await request("GET", "/prizes/withdrawals", tokens.admin);
     assert.equal(all.status, 200);
-    assert.deepEqual(all.body.data.map((item) => [item.name, item.prize]).sort(), [
-      ["CS B", "Caneca"],
-      ["Vendor A1", "Fone JBL"],
+    assert.deepEqual(all.body.data.map((item) => [item.name, item.quantity, item.withdrawnAt]).sort(), [
+      ["CS B", 2, monday],
+      ["Vendor A1", 1, monday],
     ]);
 
     const onePerson = await request("GET", `/prizes/withdrawals?kind=sdr&personId=${csB._id}`, tokens.admin);

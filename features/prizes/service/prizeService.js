@@ -69,7 +69,6 @@ exports.getWithdrawals = async (segment = null, { kind, personId } = {}) => {
         name: person?.name ?? "Pessoa removida",
         job: person?.job ?? null,
         quantity: withdrawal.quantity,
-        prize: withdrawal.prize,
         withdrawnAt: withdrawal.withdrawnAt,
         createdBy: withdrawal.createdBy,
         createdAt: withdrawal.createdAt,

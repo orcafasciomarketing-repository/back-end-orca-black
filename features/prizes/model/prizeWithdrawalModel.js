@@ -20,12 +20,6 @@ const prizeWithdrawalSchema = new Schema(
       required: true,
       min: 1,
     },
-    // Qual prêmio, ex.: "Fone JBL"
-    prize: {
-      type: String,
-      required: true,
-      trim: true,
-    },
     // Dia da retirada (AAAA-MM-DD, horário de São Paulo)
     withdrawnAt: {
       type: String,

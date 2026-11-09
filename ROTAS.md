@@ -747,7 +747,7 @@ Ver: `master`, `admin`, `b2b`, `b2g` (b2b/b2g só as pessoas com cargo do setor;
 
 Histórico de retiradas, da mais recente para a mais antiga. Filtro opcional por pessoa: `?kind=vendor|sdr&personId=<id>`.
 
-`data: [{ _id, personId, kind, name, job, quantity, prize, withdrawnAt, createdBy, createdAt }]` (pessoa apagada do cadastro vem como "Pessoa removida").
+`data: [{ _id, personId, kind, name, job, quantity, withdrawnAt, createdBy, createdAt }]` (pessoa apagada do cadastro vem como "Pessoa removida").
 
 ### `POST /prizes/withdrawals` — Só master
 
@@ -756,11 +756,10 @@ Histórico de retiradas, da mais recente para a mais antiga. Filtro opcional por
 | `personId` | string (id) | sim | Vendedor ou pessoa de passagem. |
 | `kind` | string | sim | `vendor` ou `sdr`. |
 | `quantity` | inteiro | sim | De 1 a 100. |
-| `prize` | string | sim | Qual prêmio (até 100 caracteres). |
 | `withdrawnAt` | string | sim | Dia da retirada, `AAAA-MM-DD`. |
 | `confirmOverBalance` | boolean | não | Obrigatório como `true` quando a quantidade passa do saldo. |
 
-**Resposta:** `201 data: { _id, personId, kind, quantity, prize, withdrawnAt, createdBy, ... }`. Campo inválido → `400`. Pessoa que não existe → `404 Pessoa não encontrada`. Acima do saldo sem confirmação → `409 Fulano tem saldo de 1 prêmio. Confirme para registrar mesmo assim`.
+**Resposta:** `201 data: { _id, personId, kind, quantity, withdrawnAt, createdBy, ... }`. Campo inválido ou a mais (o prêmio em si não é cadastrado) → `400`. Pessoa que não existe → `404 Pessoa não encontrada`. Acima do saldo sem confirmação → `409 Fulano tem saldo de 1 prêmio. Confirme para registrar mesmo assim`.
 
 ### `DELETE /prizes/withdrawals/:id` — Só master
 

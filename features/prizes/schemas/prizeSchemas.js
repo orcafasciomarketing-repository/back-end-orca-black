@@ -17,7 +17,6 @@ const CreateWithdrawalSchema = zod.strictObject({
     .int("A quantidade precisa ser um número inteiro")
     .min(1, "A quantidade precisa ser pelo menos 1")
     .max(100, "Quantidade alta demais"),
-  prize: zod.coerce.string().trim().min(1, "Informe qual prêmio").max(100, "Nome do prêmio muito longo"),
   withdrawnAt: day,
   // Retirada acima do saldo só passa com a confirmação de quem registra
   confirmOverBalance: zod.boolean().optional(),
