@@ -15,6 +15,7 @@ const {
   monthWeeks,
   monthDays,
   segmentParts,
+  typeTiers,
   segmentTiers,
   peopleTiers,
   weekTiers,
@@ -58,10 +59,11 @@ const toVendor = (vendor, teamsById) => {
 
 const toConfig = (config) => ({
   month: config.month,
-  goal: config.goal,
-  farmPercent: config.farmPercent,
-  superGoal: config.superGoal,
-  blackGoal: config.blackGoal ?? null,
+  farmGoal: config.farmGoal,
+  salesGoal: config.salesGoal,
+  superPercent: config.superPercent,
+  farmBlack: config.farmBlack ?? null,
+  salesBlack: config.salesBlack ?? null,
   levels: config.levels.map(({ key, name, weight }) => ({ key, name, weight })),
   people: config.people.map((person) => ({
     vendorId: String(person.vendorId),
@@ -149,8 +151,16 @@ exports.saveMonth = async (month, segment, data, updatedBy) => {
   });
 
   const isBlackMonth = blackInfo(month).active;
-  if (isBlackMonth && !(data.blackGoal > data.superGoal)) {
-    throw ValidationError("No mês da campanha, a Meta black do setor precisa ser maior que a Super meta");
+  if (isBlackMonth) {
+    const byType = typeTiers({ ...data, farmBlack: data.farmBlack ?? 0, salesBlack: data.salesBlack ?? 0 }, true);
+    for (const type of ["farm", "sales"]) {
+      const tiers = byType[type];
+      if (tiers.goal > 0 && !(tiers.black > tiers.super)) {
+        throw ValidationError(
+          `${TYPE_LABELS[type]}: a Meta black precisa ser maior que a Super meta (${money(tiers.super)})`,
+        );
+      }
+    }
   }
 
   const parts = segmentParts(data);
@@ -163,10 +173,11 @@ exports.saveMonth = async (month, segment, data, updatedBy) => {
   }
 
   const saved = await MonthlyGoalRepository.upsert(month, segment, {
-    goal: fromCents(toCents(data.goal)),
-    farmPercent: data.farmPercent,
-    superGoal: fromCents(toCents(data.superGoal)),
-    blackGoal: isBlackMonth ? fromCents(toCents(data.blackGoal)) : null,
+    farmGoal: fromCents(toCents(data.farmGoal)),
+    salesGoal: fromCents(toCents(data.salesGoal)),
+    superPercent: data.superPercent,
+    farmBlack: isBlackMonth ? fromCents(toCents(data.farmBlack ?? 0)) : null,
+    salesBlack: isBlackMonth ? fromCents(toCents(data.salesBlack ?? 0)) : null,
     levels: data.levels.map(({ key, name, weight }) => ({ key: key.trim(), name: name.trim(), weight })),
     people,
     updatedBy,
@@ -232,8 +243,9 @@ exports.getProgress = async (month, now = new Date()) => {
   const segments = [];
   for (const config of configs) {
     const levelNames = new Map(config.levels.map((level) => [level.key, level.name]));
-    const tiers = segmentTiers(config, black.active ? config.blackGoal ?? 0 : 0);
-    const tiersByPerson = peopleTiers(config.people, tiers, config.farmPercent);
+    const byType = typeTiers(config, black.active);
+    const tiers = segmentTiers(byType);
+    const tiersByPerson = peopleTiers(config.people, byType);
     const segmentPeople = config.people.map((person) => {
       const vendorId = String(person.vendorId);
       const vendor = vendorsById.get(vendorId);
@@ -271,14 +283,17 @@ exports.getProgress = async (month, now = new Date()) => {
 
     segments.push({
       segment: config.segment,
-      goal: config.goal,
-      farmPercent: config.farmPercent,
-      superGoal: config.superGoal,
-      blackGoal: black.active ? config.blackGoal ?? null : null,
-      parts: {
-        farm: { goal: parts.farm, realized: realizedOf(segmentPeople.filter((person) => person.type === "farm")) },
-        sales: { goal: parts.sales, realized: realizedOf(segmentPeople.filter((person) => person.type === "sales")) },
-      },
+      goal: tiers.goal,
+      superPercent: config.superPercent,
+      parts: Object.fromEntries(
+        ["farm", "sales"].map((type) => [
+          type,
+          {
+            goal: parts[type],
+            ...progressOf(realizedOf(segmentPeople.filter((person) => person.type === type)), byType[type], first, last),
+          },
+        ]),
+      ),
       month: progressOf(realizedOf(segmentPeople), tiers, first, last),
       weeks: weeks.map((week, index) => {
         const weekTiers = sumTiers(segmentPeople.map((person) => person.weeks[index].tiers));

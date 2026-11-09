@@ -4,9 +4,10 @@
 // - a semana vai de segunda a domingo e pertence ao mês da segunda-feira;
 // - o mês da meta são as semanas que começam nele (soma das semanas = mês);
 // - valores em reais, comparados em centavos para a soma sempre fechar;
-// - três faixas, todas em R$ por setor: Meta, Super meta e Meta black (a black só no mês da campanha).
-//   Cada uma desce igual: setor → renovação/vendas (farmPercent) → pessoas, na proporção da Meta de cada
-//   pessoa (que já vem dos pesos de senioridade) → semanas, na proporção da Meta de cada semana.
+// - o gestor define cada parte do setor em R$: Meta de renovação (Farmer) e de vendas, e no mês da
+//   campanha a Meta black de cada uma. A Super de cada parte é a Meta dela × superPercent%;
+// - Super e Black descem para as pessoas da parte na proporção da Meta de cada uma (que vem dos pesos
+//   de senioridade) e para as semanas na proporção da Meta de cada semana.
 
 const SAO_PAULO_OFFSET_MS = 3 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -72,20 +73,32 @@ const splitEqually = (totalCents, parts) => {
   return Array.from({ length: parts }, (_, index) => base + (index < rest ? 1 : 0));
 };
 
-// Renovação = valor × farmPercent%; vendas = o resto (a soma sempre fecha)
-const splitByFarm = (value, farmPercent) => {
-  const totalCents = toCents(value);
-  const farmCents = Math.round((totalCents * farmPercent) / 100);
-  return { farm: fromCents(farmCents), sales: fromCents(totalCents - farmCents) };
+const TYPES = ["farm", "sales"];
+
+// Meta de cada parte do setor (renovação e vendas), como o gestor digitou
+const segmentParts = ({ farmGoal, salesGoal }) => ({
+  farm: fromCents(toCents(farmGoal)),
+  sales: fromCents(toCents(salesGoal)),
+});
+
+// Faixas de cada parte: Meta digitada, Super = Meta × superPercent% e Black digitada (só no mês da campanha)
+const typeTiers = (config, withBlack = false) => {
+  const parts = segmentParts(config);
+  const black = { farm: withBlack ? config.farmBlack ?? 0 : 0, sales: withBlack ? config.salesBlack ?? 0 : 0 };
+  return Object.fromEntries(
+    TYPES.map((type) => [
+      type,
+      {
+        goal: parts[type],
+        super: fromCents(Math.round((toCents(parts[type]) * config.superPercent) / 100)),
+        black: fromCents(toCents(black[type])),
+      },
+    ]),
+  );
 };
 
-const segmentParts = ({ goal, farmPercent }) => splitByFarm(goal, farmPercent);
-
-const segmentTiers = ({ goal, superGoal }, blackGoal = 0) => ({
-  goal: fromCents(toCents(goal)),
-  super: fromCents(toCents(superGoal)),
-  black: fromCents(toCents(blackGoal)),
-});
+// Faixas do setor: soma das duas partes
+const segmentTiers = (byType) => sumTiers(TYPES.map((type) => byType[type]));
 
 // Reparte centavos na proporção de outros valores (em centavos); sem proporção, divide igual
 const shareLike = (totalCents, keys, weightsCents) => {
@@ -96,16 +109,15 @@ const shareLike = (totalCents, keys, weightsCents) => {
   );
 };
 
-// Faixas de cada pessoa: a Meta é a dela; a Super e a Black do setor descem para renovação/vendas e
-// depois para as pessoas daquele tipo, na proporção da Meta de cada uma
-const peopleTiers = (people, tiers, farmPercent) => {
+// Faixas de cada pessoa: a Meta é a dela; a Super e a Black da parte dela (renovação ou vendas) são
+// divididas entre as pessoas da parte na proporção da Meta de cada uma
+const peopleTiers = (people, byType) => {
   const result = new Map(people.map((person) => [String(person.vendorId), { goal: fromCents(toCents(person.goal)), super: 0, black: 0 }]));
   for (const tier of ["super", "black"]) {
-    const parts = splitByFarm(tiers[tier], farmPercent);
-    for (const type of ["farm", "sales"]) {
+    for (const type of TYPES) {
       const members = people.filter((person) => person.type === type);
       const shares = shareLike(
-        toCents(parts[type]),
+        toCents(byType[type][tier]),
         members.map((person) => String(person.vendorId)),
         members.map((person) => toCents(person.goal)),
       );
@@ -199,8 +211,8 @@ module.exports = {
   monthDays,
   distributeByWeight,
   splitEqually,
-  splitByFarm,
   segmentParts,
+  typeTiers,
   segmentTiers,
   peopleTiers,
   weekTiers,
