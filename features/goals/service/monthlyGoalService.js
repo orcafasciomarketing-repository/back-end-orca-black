@@ -26,16 +26,25 @@ const {
 
 const SEGMENTS = ["b2b", "b2g"];
 
-// A Meta black só vale no mês em que a campanha começa. A sugestão de cada setor vem da meta da
-// Black Friday já cadastrada no .env (BLACK_FRIDAY_GOAL_B2B/B2G, a mesma das TVs)
+// A Meta black só vale no mês em que a campanha começa. A de cada setor é a do .env
+// (BLACK_FRIDAY_GOAL_B2B/B2G, a mesma das TVs): o gestor só diz quanto dela é de Farmer, e Venda fica com o resto
 const BLACK_MONTH = CAMPAIGN_START_DAY.slice(0, 7);
+
+const sectorBlackOf = (segment) => (SEGMENT_GOALS[segment] > 0 ? SEGMENT_GOALS[segment] : 0);
 
 const blackInfo = (month) => ({
   month: BLACK_MONTH,
   active: month === BLACK_MONTH,
   total: BLACK_FRIDAY_GOAL,
-  suggestedGoals: Object.fromEntries(SEGMENTS.map((segment) => [segment, SEGMENT_GOALS[segment] > 0 ? SEGMENT_GOALS[segment] : null])),
+  sectorGoals: Object.fromEntries(SEGMENTS.map((segment) => [segment, sectorBlackOf(segment)])),
 });
+
+// Black de Venda = Black do setor (.env) − Black de Farmer, sempre com o valor atual do .env
+const withSectorBlack = (config) => {
+  const sector = sectorBlackOf(config.segment);
+  const farm = Math.min(toCents(config.farmBlack ?? 0), toCents(sector));
+  return { ...config, farmBlack: fromCents(farm), salesBlack: fromCents(toCents(sector) - farm) };
+};
 const TYPE_LABELS = { farm: "Renovação", sales: "Vendas" };
 
 // Farmer conta só renovações; os outros cargos (Venda, Sales, Executivo...) contam vendas novas
@@ -151,8 +160,15 @@ exports.saveMonth = async (month, segment, data, updatedBy) => {
   });
 
   const isBlackMonth = blackInfo(month).active;
+  const sectorBlack = sectorBlackOf(segment);
   if (isBlackMonth) {
-    const byType = typeTiers({ ...data, farmBlack: data.farmBlack ?? 0, salesBlack: data.salesBlack ?? 0 }, true);
+    if (sectorBlack <= 0) {
+      throw ValidationError(`A Meta black do ${segment.toUpperCase()} não está configurada no backend (BLACK_FRIDAY_GOAL_${segment.toUpperCase()})`);
+    }
+    if (toCents(data.farmBlack ?? 0) > toCents(sectorBlack)) {
+      throw ValidationError(`A Meta black Farmer passa da Meta black do setor (${money(sectorBlack)})`);
+    }
+    const byType = typeTiers(withSectorBlack({ ...data, segment }), true);
     for (const type of ["farm", "sales"]) {
       const tiers = byType[type];
       if (tiers.goal > 0 && !(tiers.black > tiers.super)) {
@@ -176,8 +192,8 @@ exports.saveMonth = async (month, segment, data, updatedBy) => {
     farmGoal: fromCents(toCents(data.farmGoal)),
     salesGoal: fromCents(toCents(data.salesGoal)),
     superPercent: data.superPercent,
-    farmBlack: isBlackMonth ? fromCents(toCents(data.farmBlack ?? 0)) : null,
-    salesBlack: isBlackMonth ? fromCents(toCents(data.salesBlack ?? 0)) : null,
+    farmBlack: isBlackMonth ? withSectorBlack({ ...data, segment }).farmBlack : null,
+    salesBlack: isBlackMonth ? withSectorBlack({ ...data, segment }).salesBlack : null,
     levels: data.levels.map(({ key, name, weight }) => ({ key: key.trim(), name: name.trim(), weight })),
     people,
     updatedBy,
@@ -243,7 +259,7 @@ exports.getProgress = async (month, now = new Date()) => {
   const segments = [];
   for (const config of configs) {
     const levelNames = new Map(config.levels.map((level) => [level.key, level.name]));
-    const byType = typeTiers(config, black.active);
+    const byType = typeTiers(black.active ? withSectorBlack(config) : config, black.active);
     const tiers = segmentTiers(byType);
     const tiersByPerson = peopleTiers(config.people, byType);
     const segmentPeople = config.people.map((person) => {

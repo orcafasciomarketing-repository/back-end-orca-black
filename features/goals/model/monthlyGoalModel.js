@@ -1,8 +1,8 @@
 const { Schema, model } = require("mongoose");
 
 // Meta de um setor (b2b ou b2g) em um mês (AAAA-MM), com tudo o que o gestor cadastra:
-// a Meta de renovação e a de vendas em R$, o % da Super meta sobre a Meta, a Meta black de renovação
-// e de vendas em R$ (só no mês da campanha), os níveis de senioridade e a meta de cada vendedor (mensal e por
+// a Meta de renovação e a de vendas em R$, o % da Super meta sobre a Meta, quanto da Meta black do
+// setor (.env) é de renovação (só no mês da campanha), os níveis de senioridade e a meta de cada vendedor (mensal e por
 // semana). Cada mês é um documento, então mudar um mês não mexe no histórico dos outros
 const levelSchema = new Schema(
   {
@@ -35,6 +35,7 @@ const monthlyGoalSchema = new Schema(
     superPercent: { type: Number, required: true },
     // Só no mês da campanha; nos outros, null
     farmBlack: { type: Number, default: null },
+    // Black do setor (.env) − Black de Farmer, gravada para registro; o progresso recalcula com o .env atual
     salesBlack: { type: Number, default: null },
     levels: [levelSchema],
     people: [personSchema],

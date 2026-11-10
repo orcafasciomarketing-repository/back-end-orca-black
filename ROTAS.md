@@ -786,7 +786,7 @@ Exclui um lançamento errado; o saldo se recalcula. Retirada que não existe →
 
 ## Metas mensais — `/goals`
 
-Metas em R$ por setor, por vendedor e por semana, com três faixas: Meta, Super meta e Meta black (a black só no mês em que a campanha começa, `config/campaign.js`). O gestor define em R$ quanto é de Farmer (renovação) e quanto é de Venda, na Meta e na Meta black; a Super de cada parte é a Meta dela × `superPercent` (o único percentual). O setor é a soma das partes. Depois, cada faixa da parte vai para as pessoas da parte na proporção da Meta de cada uma (que vem dos pesos de senioridade) e para as semanas na proporção da Meta semanal. Regras em RN-69 a RN-73. **Fase de teste com o gestor: só `master` e `admin`** (b2b, b2g, vendor e sdr → `403`; sem login → `401`). Não mexe na meta das TVs (`BLACK_FRIDAY_GOAL*` do `.env`). Mês fora do formato `AAAA-MM` ou setor diferente de `b2b`/`b2g` → `400`.
+Metas em R$ por setor, por vendedor e por semana, com três faixas: Meta, Super meta e Meta black (a black só no mês em que a campanha começa, `config/campaign.js`). O gestor define em R$ a Meta de Farmer (renovação) e a de Venda (o setor é a soma); a Super de cada parte é a Meta dela × `superPercent` (o único percentual). A Meta black do setor vem do `.env` (`BLACK_FRIDAY_GOAL_B2B/B2G`, a mesma das TVs): o gestor só diz quanto dela é de Farmer (`farmBlack`) e Venda fica com o resto. Depois, cada faixa da parte vai para as pessoas da parte na proporção da Meta de cada uma (que vem dos pesos de senioridade) e para as semanas na proporção da Meta semanal. Regras em RN-69 a RN-73. **Fase de teste com o gestor: só `master` e `admin`** (b2b, b2g, vendor e sdr → `403`; sem login → `401`). Não mexe na meta das TVs (`BLACK_FRIDAY_GOAL*` do `.env`). Mês fora do formato `AAAA-MM` ou setor diferente de `b2b`/`b2g` → `400`.
 
 ### `GET /goals/:month`
 
@@ -796,7 +796,7 @@ Para a tela de cadastro.
 {
   "month": "2026-11",
   "weeks": [{ "index": 0, "start": "2026-11-02", "end": "2026-11-08" }],
-  "black": { "month": "2026-11", "active": true, "total": 3000000, "suggestedGoals": { "b2b": 2000000, "b2g": 1000000 } },
+  "black": { "month": "2026-11", "active": true, "total": 3000000, "sectorGoals": { "b2b": 2000000, "b2g": 1000000 } },
   "segments": {
     "b2b": {
       "config": { "month": "2026-11", "farmGoal": 48000, "salesGoal": 72000, "superPercent": 125, "farmBlack": 80000, "salesBlack": 120000,
@@ -812,15 +812,15 @@ Para a tela de cadastro.
 ```
 
 - `weeks`: semanas (segunda a domingo) que **começam** no mês; a última pode terminar no mês seguinte.
-- `black.active`: o mês é o da campanha (tem Meta black). `suggestedGoals`: a Meta black de cada setor já cadastrada no `.env` (`BLACK_FRIDAY_GOAL_B2B/B2G`, a mesma das TVs), que a tela mostra como referência ao lado da soma de Farmer + Venda.
+- `black.active`: o mês é o da campanha (tem Meta black). `sectorGoals`: a Meta black de cada setor do `.env` (`BLACK_FRIDAY_GOAL_B2B/B2G`, a mesma das TVs; `0` se não configurada). O `salesBlack` do `config` é só registro: o progresso sempre usa Black do setor do `.env` − `farmBlack`.
 - `config`: o que está salvo (ou `null`). `previous`: sem `config`, o último mês salvo antes deste, para a tela copiar.
 - `vendors`: vendedores do setor pelo cargo (`"B2B ..."` / `"B2G ..."`); `type` = `farm` se o cargo tem "Farmer", senão `sales`.
 
 ### `PUT /goals/:month/:segment`
 
-Body (`strictObject`): `{ farmGoal, salesGoal, superPercent, farmBlack?, salesBlack?, levels: [{ key, name, weight }], people: [{ vendorId, level, goal, weeks: [...] }] }` (valores em R$; `farmBlack`/`salesBlack` só são gravados no mês da campanha). Substitui o mês inteiro daquele setor (os outros meses não mudam). Só salva quando tudo fecha (senão `400` com a mensagem):
+Body (`strictObject`): `{ farmGoal, salesGoal, superPercent, farmBlack?, levels: [{ key, name, weight }], people: [{ vendorId, level, goal, weeks: [...] }] }` (valores em R$; `farmBlack` só é gravado no mês da campanha, junto com `salesBlack` = Black do setor − `farmBlack`). Substitui o mês inteiro daquele setor (os outros meses não mudam). Só salva quando tudo fecha (senão `400` com a mensagem):
 
-- `farmGoal + salesGoal` > 0; `superPercent` > 100; no mês da campanha, em cada parte com Meta, a Black > a Super dela (ex.: `"Vendas: a Meta black precisa ser maior que a Super meta (R$ 1.500,00)"`); pelo menos um nível, com peso > 0 e chave única;
+- `farmGoal + salesGoal` > 0; `superPercent` > 100; no mês da campanha, a Black do setor configurada no `.env`, `farmBlack` ≤ a Black do setor e, em cada parte com Meta, a Black > a Super dela (ex.: `"Vendas: a Meta black precisa ser maior que a Super meta (R$ 1.500,00)"`); pelo menos um nível, com peso > 0 e chave única;
 - cada vendedor existe, é do setor, aparece uma vez e tem um nível válido;
 - uma meta por semana do mês, e a soma das semanas = a meta mensal do vendedor (no centavo);
 - a soma das metas dos Farmers = `farmGoal` e a dos outros = `salesGoal` (no centavo). Ex.: `"Renovação: distribuído R$ 40.000,00 de R$ 48.000,00"`.

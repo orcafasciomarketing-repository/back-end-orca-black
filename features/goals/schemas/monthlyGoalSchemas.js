@@ -12,7 +12,6 @@ const SaveMonthlyGoalSchema = zod
       .gt(100, "A Super meta precisa ser maior que 100% da Meta")
       .max(1000, "Percentual da Super meta alto demais"),
     farmBlack: money("Meta black de renovação inválida").nullable().optional(),
-    salesBlack: money("Meta black de vendas inválida").nullable().optional(),
     levels: zod
       .array(
         zod.strictObject({

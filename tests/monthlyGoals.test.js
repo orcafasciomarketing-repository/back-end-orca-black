@@ -275,13 +275,13 @@ describe("Metas mensais (/goals)", () => {
   });
 
   describe("Meta black no mês da campanha (2026-11)", () => {
-    // B2B: Meta de renovação 1.800 (A2) e de vendas 1.200 (A1); Super 125%; Black 3.000 e 2.000
+    // B2B: Meta de renovação 1.800 (A2) e de vendas 1.200 (A1); Super 125%.
+    // Black do setor no .env de teste: 6.000 → 3.000 de Farmer e o resto (3.000) de Venda
     const novemberB2b = (changes = {}) => ({
       farmGoal: 1800,
       salesGoal: 1200,
       superPercent: 125,
       farmBlack: 3000,
-      salesBlack: 2000,
       levels: [{ key: "jr", name: "Júnior", weight: 1 }],
       people: [
         { vendorId: String(seed.vendorA1._id), level: "jr", goal: 1200, weeks: [240, 240, 240, 240, 240] },
@@ -290,26 +290,31 @@ describe("Metas mensais (/goals)", () => {
       ...changes,
     });
 
-    it("o mês da campanha mostra a Meta black de cada setor do .env como referência", async () => {
+    it("o mês da campanha traz a Meta black de cada setor do .env", async () => {
       const month = (await request("GET", "/goals/2026-11", tokens.admin)).body.data;
       assert.equal(month.black.active, true);
-      assert.deepEqual(month.black.suggestedGoals, { b2b: 6000, b2g: 3000 });
+      assert.deepEqual(month.black.sectorGoals, { b2b: 6000, b2g: 3000 });
       assert.equal((await request("GET", `/goals/${MONTH}`, tokens.admin)).body.data.black.active, false);
     });
 
-    it("no mês da campanha, a Black de cada parte com meta precisa ser maior que a Super dela", async () => {
+    it("o gestor diz quanto da Black do setor é de Farmer; Venda fica com o resto; cada uma maior que a Super", async () => {
       const put = (body) => request("PUT", "/goals/2026-11/b2b", tokens.admin, body);
 
       assert.match((await put(novemberB2b({ farmBlack: null }))).body.error, /Renovação: a Meta black precisa ser maior/);
-      assert.match((await put(novemberB2b({ salesBlack: 1500 }))).body.error, /Vendas: a Meta black precisa ser maior que a Super meta \(R\$\s1\.500,00\)/);
+      assert.match(
+        (await put(novemberB2b({ farmBlack: 5000 }))).body.error,
+        /Vendas: a Meta black precisa ser maior que a Super meta \(R\$\s1\.500,00\)/,
+      );
+      assert.match((await put(novemberB2b({ farmBlack: 7000 }))).body.error, /passa da Meta black do setor/);
+      assert.equal((await put(novemberB2b({ salesBlack: 1 }))).status, 400);
       assert.equal((await put(novemberB2b())).status, 200);
 
       const saved = await MonthlyGoal.findOne({ month: "2026-11" });
-      assert.deepEqual([saved.farmBlack, saved.salesBlack], [3000, 2000]);
+      assert.deepEqual([saved.farmBlack, saved.salesBlack], [3000, 3000]);
     });
 
     it("fora do mês da campanha a Meta black não é gravada", async () => {
-      await request("PUT", `/goals/${MONTH}/b2b`, tokens.admin, { ...validB2b(), farmBlack: 99999, salesBlack: 99999 });
+      await request("PUT", `/goals/${MONTH}/b2b`, tokens.admin, { ...validB2b(), farmBlack: 99999 });
       const saved = await MonthlyGoal.findOne({ month: MONTH });
       assert.deepEqual([saved.farmBlack, saved.salesBlack], [null, null]);
     });
@@ -323,11 +328,12 @@ describe("Metas mensais (/goals)", () => {
       const a2 = data.people.find((person) => person.name === "Vendor A2");
 
       assert.equal(data.black.active, true);
-      assert.deepEqual(b2b.month.tiers, { goal: 3000, super: 3750, black: 5000 });
+      assert.deepEqual(b2b.month.tiers, { goal: 3000, super: 3750, black: 6000 });
       assert.deepEqual(b2b.parts.farm.tiers, { goal: 1800, super: 2250, black: 3000 });
-      assert.deepEqual(a1.month.tiers, { goal: 1200, super: 1500, black: 2000 });
+      assert.deepEqual(b2b.parts.sales.tiers, { goal: 1200, super: 1500, black: 3000 });
+      assert.deepEqual(a1.month.tiers, { goal: 1200, super: 1500, black: 3000 });
       assert.deepEqual(a2.month.tiers, { goal: 1800, super: 2250, black: 3000 });
-      assert.deepEqual(a1.weeks[0].tiers, { goal: 240, super: 300, black: 400 });
+      assert.deepEqual(a1.weeks[0].tiers, { goal: 240, super: 300, black: 600 });
       assert.deepEqual(a1.month.available, ["goal", "super", "black"]);
     });
   });
