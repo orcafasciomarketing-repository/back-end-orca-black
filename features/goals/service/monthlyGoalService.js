@@ -22,7 +22,10 @@ const {
   sumTiers,
   tierProgress,
   paceOf,
+  monthForecast,
+  combineMonthForecasts,
 } = require("./goalCalculator");
+const { forecastModelOf } = require("../../../config/forecastModels");
 
 const SEGMENTS = ["b2b", "b2g"];
 
@@ -258,6 +261,8 @@ exports.deleteMonth = async (month, segment) => {
   return await MonthlyGoalRepository.deleteOne(month, segment);
 };
 
+const sumOf = (values) => values.reduce((total, value) => total + value, 0);
+
 const cumulative = (values) => {
   let sum = 0;
   return values.map((value) => {
@@ -274,7 +279,7 @@ exports.getProgress = async (month, now = new Date()) => {
   const days = monthDays(weeks);
   const configs = (await MonthlyGoalRepository.findByMonth(month)).sort((a, b) => a.segment.localeCompare(b.segment));
 
-  const empty = { month, today, weeks, days, black: blackInfo(month), segments: [], people: [], teams: [] };
+  const empty = { month, today, weeks, days, black: blackInfo(month), total: null, segments: [], people: [], teams: [] };
   if (!configs.length || !weeks.length) {
     return { ...empty, summary: { people: 0, reachedGoal: 0, reachedSuper: 0, reachedBlack: 0, onPace: 0, behind: 0 } };
   }
@@ -306,6 +311,10 @@ exports.getProgress = async (month, now = new Date()) => {
     ...tierProgress(realized, tiers),
     pace: paceOf({ realized, goal: tiers.goal, start, end, today }),
   });
+  const forecastOf = (dailyCents, tiers, segment) =>
+    monthForecast({ days, dailyCents, tiers, today, model: forecastModelOf(segment) });
+  const sumDaily = (list) => days.map((_, index) => list.reduce((sum, daily) => sum + daily[index], 0));
+  const allByType = { farm: [], sales: [] };
 
   const black = blackInfo(month);
   const people = [];
@@ -336,6 +345,7 @@ exports.getProgress = async (month, now = new Date()) => {
         level: person.level,
         levelName: levelNames.get(person.level) ?? person.level,
         month: progressOf(realized, personTiers, first, last),
+        forecast: forecastOf(daily, personTiers, config.segment),
         weeks: weeks.map((week, index) => ({
           index,
           start: week.start,
@@ -348,7 +358,10 @@ exports.getProgress = async (month, now = new Date()) => {
 
     const parts = segmentParts(config);
     const realizedOf = (list) => fromCents(list.reduce((sum, person) => sum + toCents(person.month.realized), 0));
-    const segmentDaily = days.map((_, index) => segmentPeople.reduce((sum, person) => sum + person.daily[index], 0));
+    const segmentDaily = sumDaily(segmentPeople.map((person) => person.daily));
+    for (const type of ["farm", "sales"]) {
+      allByType[type].push(byType[type]);
+    }
 
     segments.push({
       segment: config.segment,
@@ -364,6 +377,7 @@ exports.getProgress = async (month, now = new Date()) => {
         ]),
       ),
       month: progressOf(realizedOf(segmentPeople), tiers, first, last),
+      forecast: forecastOf(segmentDaily, tiers, config.segment),
       weeks: weeks.map((week, index) => {
         const weekTiers = sumTiers(segmentPeople.map((person) => person.weeks[index].tiers));
         const realized = fromCents(sumRange(segmentDaily, week.start, week.end));
@@ -373,6 +387,40 @@ exports.getProgress = async (month, now = new Date()) => {
     });
     people.push(...segmentPeople);
   }
+
+  // Total: os setores somados (com "Todos" no filtro do admin)
+  const totalDaily = sumDaily(people.map((person) => person.daily));
+  const totalTiers = sumTiers(segments.map((item) => item.month.tiers));
+  const totalRealized = (list) => fromCents(sumOf(list.map((person) => toCents(person.month.realized))));
+  const total = {
+    goal: totalTiers.goal,
+    parts: Object.fromEntries(
+      ["farm", "sales"].map((type) => {
+        const typeTotal = sumTiers(allByType[type]);
+        return [
+          type,
+          {
+            goal: typeTotal.goal,
+            ...progressOf(totalRealized(people.filter((person) => person.type === type)), typeTotal, first, last),
+          },
+        ];
+      }),
+    ),
+    month: progressOf(totalRealized(people), totalTiers, first, last),
+    forecast: combineMonthForecasts({
+      days,
+      dailyCents: totalDaily,
+      tiers: totalTiers,
+      today,
+      parts: segments.map((item) => item.forecast),
+    }),
+    weeks: weeks.map((week, index) => {
+      const weekTotal = sumTiers(segments.map((item) => item.weeks[index].tiers));
+      const realized = fromCents(sumRange(totalDaily, week.start, week.end));
+      return { index, start: week.start, end: week.end, ...progressOf(realized, weekTotal, week.start, week.end) };
+    }),
+    cumulative: cumulative(totalDaily),
+  };
 
   const teamsMap = new Map();
   for (const person of people) {
@@ -404,6 +452,7 @@ exports.getProgress = async (month, now = new Date()) => {
   const reached = (tier) => people.filter((person) => person.month.reached.includes(tier)).length;
   return {
     ...empty,
+    total,
     segments,
     people: sortedPeople,
     teams,
@@ -419,3 +468,103 @@ exports.getProgress = async (month, now = new Date()) => {
 };
 
 exports.typeOfJob = typeOfJob;
+
+const shiftMonth = (month, amount) => {
+  const [year, number] = month.split("-").map(Number);
+  const date = new Date(Date.UTC(year, number - 1 + amount, 1));
+  return date.toISOString().slice(0, 7);
+};
+
+// Histórico mês a mês (o mês escolhido e os anteriores): o realizado do total, de cada setor e de cada
+// vendedor, com as faixas do mês quando ele tem meta cadastrada. Cada mês são as semanas que começam nele.
+// Mês com meta: conta as pessoas cadastradas, cada uma no tipo dela. Mês sem meta: os vendedores de cada
+// setor pelo cargo de hoje, cada um no tipo do cargo, e as faixas vêm null
+exports.getHistory = async (month, count = 6) => {
+  const months = Array.from({ length: count }, (_, index) => shiftMonth(month, index - count + 1));
+  const ranges = months.map((key) => ({ month: key, weeks: monthWeeks(key) })).filter((item) => item.weeks.length);
+  const first = ranges[0].weeks[0].start;
+  const lastWeeks = ranges[ranges.length - 1].weeks;
+  const last = lastWeeks[lastWeeks.length - 1].end;
+
+  const [sales, { vendors }, configsByMonth] = await Promise.all([
+    SalesRepository.findActiveByRealizedAt(startOfDay(first), new Date(startOfDay(addDays(last, 1)).getTime() - 1)),
+    loadPeopleContext(),
+    Promise.all(ranges.map((item) => MonthlyGoalRepository.findByMonth(item.month))),
+  ]);
+
+  const monthOfDay = (day) =>
+    ranges.findIndex((item) => day >= item.weeks[0].start && day <= item.weeks[item.weeks.length - 1].end);
+  const cents = ranges.map(() => new Map());
+  for (const sale of sales) {
+    if (!sale.vendorId) continue;
+    const index = monthOfDay(dayKeyOf(sale.realizedAt));
+    if (index < 0) continue;
+    const key = `${String(sale.vendorId)}-${sale.funnelType}`;
+    cents[index].set(key, (cents[index].get(key) ?? 0) + toCents(sale.value));
+  }
+
+  const segmentVendors = vendors.filter((vendor) => SEGMENTS.includes(segmentOfJob(vendor.job)));
+
+  return {
+    month,
+    black: blackInfo(month),
+    months: ranges.map((item, index) => {
+      const configs = configsByMonth[index];
+      const isBlack = item.month === BLACK_MONTH;
+      const realizedOf = (vendorId, type) => cents[index].get(`${vendorId}-${type}`) ?? 0;
+      const people = [];
+      const segments = {};
+
+      for (const segment of SEGMENTS) {
+        const config = configs.find((entry) => entry.segment === segment);
+        if (config) {
+          const byType = typeTiers(isBlack ? withSectorBlack(config) : config, isBlack);
+          const tiersByPerson = peopleTiers(config.people, byType);
+          const segmentPeople = config.people.map((person) => ({
+            vendorId: String(person.vendorId),
+            segment,
+            type: person.type,
+            realized: fromCents(realizedOf(String(person.vendorId), person.type)),
+            tiers: tiersByPerson.get(String(person.vendorId)),
+          }));
+          people.push(...segmentPeople);
+          segments[segment] = {
+            realized: fromCents(sumOf(segmentPeople.map((person) => toCents(person.realized)))),
+            tiers: segmentTiers(byType),
+          };
+        } else {
+          const segmentPeople = segmentVendors
+            .filter((vendor) => segmentOfJob(vendor.job) === segment)
+            .map((vendor) => {
+              const type = typeOfJob(vendor.job);
+              return {
+                vendorId: String(vendor._id),
+                segment,
+                type,
+                realized: fromCents(realizedOf(String(vendor._id), type)),
+                tiers: null,
+              };
+            });
+          people.push(...segmentPeople);
+          segments[segment] = {
+            realized: fromCents(sumOf(segmentPeople.map((person) => toCents(person.realized)))),
+            tiers: null,
+          };
+        }
+      }
+
+      const withTiers = SEGMENTS.filter((segment) => segments[segment].tiers);
+      return {
+        month: item.month,
+        start: item.weeks[0].start,
+        end: item.weeks[item.weeks.length - 1].end,
+        total: {
+          realized: fromCents(sumOf(SEGMENTS.map((segment) => toCents(segments[segment].realized)))),
+          tiers: withTiers.length ? sumTiers(withTiers.map((segment) => segments[segment].tiers)) : null,
+        },
+        segments,
+        people,
+      };
+    }),
+  };
+};

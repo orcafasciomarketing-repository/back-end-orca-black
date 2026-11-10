@@ -1,12 +1,7 @@
 // Cálculo do forecast (ver forecast_automatico_crm.pdf). Funções puras: recebem as
 // vendas já buscadas e o "agora", então dá para testar cada fórmula com números exatos.
-const {
-  CAMPAIGN_START_DAY,
-  CAMPAIGN_END_DAY,
-  HOLIDAYS,
-  PACE_WEIGHTS,
-  SCENARIO_FACTORS,
-} = require("../../../config/campaign");
+const { CAMPAIGN_START_DAY, CAMPAIGN_END_DAY, HOLIDAYS } = require("../../../config/campaign");
+const { forecastModelOf } = require("../../../config/forecastModels");
 
 // O Brasil não tem mais horário de verão: São Paulo é sempre UTC-3
 const SAO_PAULO_OFFSET_MS = 3 * 60 * 60 * 1000;
@@ -64,9 +59,9 @@ const productiveDayFor = (day, productiveDays) => {
   return chosen;
 };
 
-const buildScenarios = (sold, pace, days) =>
+const buildScenarios = (sold, pace, days, factors) =>
   Object.fromEntries(
-    Object.entries(SCENARIO_FACTORS).map(([name, factor]) => [name, roundMoney(sold + pace * factor * days)]),
+    Object.entries(factors).map(([name, factor]) => [name, roundMoney(sold + pace * factor * days)]),
   );
 
 // Chance de bater a meta: z = (meta - realista) / (desvio diário x raiz(dias que faltam))
@@ -104,7 +99,11 @@ const buildWeekGoal = ({ sales, goal, weekStart, weekEnd, weekSold, weekDaysLeft
   };
 };
 
-exports.buildForecast = ({ sales, goal, now = new Date() }) => {
+const modelInfo = (model) => ({ key: model.key, label: model.label, basedOn: model.basedOn });
+
+// model: o modelo do setor (config/forecastModels.js); sem ele, o do B2B
+exports.buildForecast = ({ sales, goal, now = new Date(), model = forecastModelOf("b2b") }) => {
+  const { paceWeights: PACE_WEIGHTS, scenarioFactors: SCENARIO_FACTORS } = model;
   const today = dayKeyOf(now);
   const hasStarted = today >= CAMPAIGN_START_DAY;
   const lastElapsedDay = today < CAMPAIGN_END_DAY ? today : CAMPAIGN_END_DAY;
@@ -133,7 +132,7 @@ exports.buildForecast = ({ sales, goal, now = new Date() }) => {
   const pace = sum(Object.keys(PACE_WEIGHTS).map((key) => averages[key] * PACE_WEIGHTS[key]));
 
   const daysLeft = remainingDays.length;
-  const scenarios = buildScenarios(sold, pace, daysLeft);
+  const scenarios = buildScenarios(sold, pace, daysLeft, SCENARIO_FACTORS);
   const remainingToGoal = Math.max(goal - sold, 0);
   const requiredPace = daysLeft > 0 ? remainingToGoal / daysLeft : null;
   const stdDev = standardDeviation(dailyValues.slice(-30));
@@ -165,6 +164,7 @@ exports.buildForecast = ({ sales, goal, now = new Date() }) => {
   return {
     today,
     goal,
+    model: modelInfo(model),
     campaign: {
       start: CAMPAIGN_START_DAY,
       end: CAMPAIGN_END_DAY,
@@ -189,7 +189,7 @@ exports.buildForecast = ({ sales, goal, now = new Date() }) => {
       end: weekEnd,
       sold: roundMoney(weekSold),
       remainingDays: weekDaysLeft,
-      scenarios: buildScenarios(weekSold, pace, weekDaysLeft),
+      scenarios: buildScenarios(weekSold, pace, weekDaysLeft, SCENARIO_FACTORS),
     },
     weekGoal: buildWeekGoal({ sales, goal, weekStart, weekEnd, weekSold, weekDaysLeft }),
     trajectory: {
@@ -202,5 +202,61 @@ exports.buildForecast = ({ sales, goal, now = new Date() }) => {
   };
 };
 
+const sumScenarios = (list) =>
+  Object.fromEntries(
+    Object.keys(list[0]).map((name) => [name, roundMoney(sum(list.map((scenarios) => scenarios[name])))]),
+  );
+
+const sumSeries = (list) =>
+  list[0].map((_, index) =>
+    list.every((values) => values[index] === null) ? null : roundMoney(sum(list.map((values) => values[index] ?? 0))),
+  );
+
+const sameWeights = (parts) =>
+  parts.every((part) => JSON.stringify(part.campaign.pace.weights) === JSON.stringify(parts[0].campaign.pace.weights));
+
+// Forecast do total ("Todos") = soma dos forecasts de cada setor, cada um com o seu modelo.
+// total: forecast de todas as vendas (dá o vendido, as médias, o desvio, a semana e a meta semanal);
+// parts: forecast de cada setor. Ritmo, cenários e trajetória vêm da soma dos setores; ritmo necessário,
+// cobertura, gap e chance são recalculados com eles. Com os mesmos modelos, dá o mesmo que antes
+exports.combineForecasts = ({ total, parts, goal }) => {
+  const { campaign } = total;
+  const pace = sum(parts.map((part) => part.campaign.pace.current));
+  const scenarios = sumScenarios(parts.map((part) => part.campaign.scenarios));
+  const daysLeft = campaign.productiveDays.remaining;
+  const probability = goalProbability({
+    sold: campaign.sold,
+    goal,
+    realistic: scenarios.realistic,
+    stdDev: campaign.dailyStdDev,
+    daysLeft,
+  });
+
+  return {
+    ...total,
+    model: { key: "total", label: "Soma dos forecasts dos setores", basedOn: null, parts: parts.map((part) => part.model) },
+    campaign: {
+      ...campaign,
+      pace: {
+        ...campaign.pace,
+        current: roundMoney(pace),
+        weights: sameWeights(parts) ? parts[0].campaign.pace.weights : null,
+      },
+      scenarios,
+      paceCoverage: campaign.requiredPace ? roundPercent(pace / campaign.requiredPace) : null,
+      gap: roundMoney(goal - scenarios.realistic),
+      probability: probability === null ? null : roundPercent(probability),
+    },
+    week: { ...total.week, scenarios: sumScenarios(parts.map((part) => part.week.scenarios)) },
+    trajectory: {
+      ...total.trajectory,
+      pessimistic: sumSeries(parts.map((part) => part.trajectory.pessimistic)),
+      realistic: sumSeries(parts.map((part) => part.trajectory.realistic)),
+      optimistic: sumSeries(parts.map((part) => part.trajectory.optimistic)),
+    },
+  };
+};
+
+exports.goalProbability = goalProbability;
 exports.normalCdf = normalCdf;
 exports.isProductiveDay = isProductiveDay;

@@ -104,6 +104,72 @@ describe("Cálculo das metas mensais (goalCalculator)", () => {
   });
 });
 
+describe("Forecast do mês da meta (goalCalculator.monthForecast)", () => {
+  const days = ["2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06", "2026-11-07", "2026-11-08"];
+
+  it("mesmo modelo do forecast da campanha: feriado vai para o dia produtivo seguinte do início, ritmo ponderado e cenários", () => {
+    const forecast = calc.monthForecast({
+      days,
+      dailyCents: [100000, 100000, 200000, 0, 0, 0, 0],
+      tiers: { goal: 5000, super: 6000, black: 0 },
+      today: "2026-11-04",
+    });
+
+    assert.deepEqual(forecast.productiveDays, { elapsed: 2, remaining: 3 });
+    assert.equal(forecast.pace.current, 2000);
+    assert.deepEqual(forecast.scenarios, { pessimistic: 8800, realistic: 10000, optimistic: 11200 });
+    assert.deepEqual(Object.keys(forecast.tiers), ["goal", "super"]);
+    assert.deepEqual(forecast.tiers.super, {
+      target: 6000,
+      requiredPace: 666.67,
+      paceCoverage: 300,
+      gap: -4000,
+      probability: 100,
+    });
+    assert.deepEqual(forecast.trajectory.realistic, [null, null, 4000, 6000, 8000, 10000, 10000]);
+  });
+
+  it("chance de cada faixa pela normal; mês encerrado: 100 se bateu, 0 se não", () => {
+    const forecast = calc.monthForecast({
+      days,
+      dailyCents: [0, 100000, 300000, 0, 0, 0, 0],
+      tiers: { goal: 9000, super: 12000, black: 20000 },
+      today: "2026-11-04",
+    });
+    assert.ok(forecast.tiers.goal.probability > 50 && forecast.tiers.goal.probability < 100);
+    assert.ok(forecast.tiers.super.probability < forecast.tiers.goal.probability);
+    assert.ok(forecast.tiers.black.probability < forecast.tiers.super.probability);
+
+    const closed = calc.monthForecast({
+      days,
+      dailyCents: [0, 100000, 300000, 0, 0, 0, 0],
+      tiers: { goal: 4000, super: 5000, black: 0 },
+      today: "2026-11-20",
+    });
+    assert.deepEqual([closed.tiers.goal.probability, closed.tiers.super.probability], [100, 0]);
+    assert.ok(closed.trajectory.realistic.every((value) => value === null));
+  });
+
+  it("o total soma os forecasts dos setores; com o mesmo modelo dá o mesmo que calcular tudo junto", () => {
+    const b2b = [0, 100000, 300000, 0, 0, 0, 0];
+    const b2g = [0, 50000, 20000, 0, 0, 0, 0];
+    const tiers = { goal: 9000, super: 12000, black: 0 };
+    const today = "2026-11-04";
+    const total = b2b.map((value, index) => value + b2g[index]);
+    const parts = [
+      calc.monthForecast({ days, dailyCents: b2b, tiers, today }),
+      calc.monthForecast({ days, dailyCents: b2g, tiers, today }),
+    ];
+    const combined = calc.combineMonthForecasts({ days, dailyCents: total, tiers, today, parts });
+    const together = calc.monthForecast({ days, dailyCents: total, tiers, today });
+
+    assert.equal(combined.model.key, "total");
+    assert.deepEqual(combined.scenarios, together.scenarios);
+    assert.deepEqual(combined.tiers, together.tiers);
+    assert.deepEqual(combined.trajectory, together.trajectory);
+  });
+});
+
 describe("Metas mensais (/goals)", () => {
   let testApp;
   let seed;
@@ -462,6 +528,54 @@ describe("Metas mensais (/goals)", () => {
 
       assert.deepEqual(data.people.map((person) => person.name), ["Vendor A1", "Vendor A2"]);
       assert.deepEqual(data.summary, { people: 2, reachedGoal: 1, reachedSuper: 1, reachedBlack: 0, onPace: 1, behind: 1 });
+
+      assert.deepEqual(data.total.month.tiers, b2b.month.tiers);
+      assert.equal(data.total.month.realized, 6500);
+      assert.deepEqual(data.total.parts.sales.tiers, b2b.parts.sales.tiers);
+      assert.equal(data.total.cumulative.at(-1), 6500);
+      assert.equal(data.total.weeks[0].tiers.goal, 2500);
+      assert.deepEqual(Object.keys(data.total.forecast.tiers), ["goal", "super"]);
+      assert.deepEqual([a1.forecast.tiers.goal.probability, a1.forecast.tiers.super.probability], [100, 100]);
+      assert.equal(a2.forecast.tiers.goal.probability, 0);
+      assert.equal(b2b.forecast.tiers.goal.target, 10000);
+      assert.equal(b2b.forecast.model.key, "b2b");
+      assert.equal(a1.forecast.model.key, "b2b");
+      assert.equal(data.total.forecast.model.key, "total");
+    });
+  });
+
+  describe("histórico mês a mês", () => {
+    it("realizado e faixas de cada mês; mês sem meta conta os vendedores do setor pelo cargo, sem faixas", async () => {
+      await request("PUT", `/goals/${MONTH}/b2b`, tokens.admin, validB2b());
+      await Sales.create([
+        sale("h1", seed.vendorA1, "sales", "2026-10-06T15:00:00Z", 3000),
+        sale("h2", seed.vendorA1, "sales", "2026-09-15T15:00:00Z", 700),
+        sale("h3", seed.vendorA1, "farm", "2026-09-15T15:00:00Z", 9999),
+        sale("h4", seed.vendorA2, "farm", "2026-09-16T15:00:00Z", 300),
+        sale("h5", seed.vendorB1, "sales", "2026-09-17T15:00:00Z", 50),
+      ]);
+
+      const { status, body } = await request("GET", `/goals/${MONTH}/history?months=3`, tokens.admin);
+      assert.equal(status, 200);
+      const { months } = body.data;
+      assert.deepEqual(months.map((item) => item.month), ["2026-08", "2026-09", MONTH]);
+
+      const [, september, october] = months;
+      assert.deepEqual(october.total, { realized: 3000, tiers: { goal: 10000, super: 12000, black: 0 } });
+      assert.deepEqual(october.segments.b2g, { realized: 0, tiers: null });
+      assert.deepEqual(september.segments.b2b, { realized: 1000, tiers: null });
+      assert.equal(september.segments.b2g.realized, 50);
+      assert.equal(september.total.tiers, null);
+      const a1 = (item) => item.people.find((person) => person.vendorId === String(seed.vendorA1._id));
+      assert.deepEqual([a1(september).realized, a1(september).tiers], [700, null]);
+      assert.deepEqual(a1(october).tiers, { goal: 4000, super: 4800, black: 0 });
+    });
+
+    it("quantidade de meses de 1 a 12; só master e admin", async () => {
+      assert.equal((await request("GET", `/goals/${MONTH}/history`, tokens.admin)).body.data.months.length, 6);
+      assert.equal((await request("GET", `/goals/${MONTH}/history?months=13`, tokens.admin)).status, 400);
+      assert.equal((await request("GET", `/goals/${MONTH}/history?months=0`, tokens.admin)).status, 400);
+      assert.equal((await request("GET", `/goals/${MONTH}/history`, tokens.b2b)).status, 403);
     });
   });
 });

@@ -47,6 +47,7 @@ Erros passam pelo handler global e retornam `{ "error": "mensagem" }` com o stat
 | GET | `/me/prizes` | **Só vendor e sdr** | — | `getPrizes` → `getPrizes` |
 | GET | `/goals/:month` | **Master e admin** | path `month` (AAAA-MM) | `getMonth` → `getMonth` |
 | GET | `/goals/:month/progress` | **Master e admin** | path `month` | `getProgress` → `getProgress` |
+| GET | `/goals/:month/history` | **Master e admin** | path `month`, query `months` | `getHistory` → `getHistory` |
 | PUT | `/goals/:month/:segment` | **Master e admin** | path `month`, `segment`, body | `saveMonth` → `saveMonth` |
 | DELETE | `/goals/:month/:segment` | **Master e admin** | path `month`, `segment` | `deleteMonth` → `deleteMonth` |
 | GET | `/public/*` | Pública (arquivos estáticos) | path do arquivo | — |
@@ -505,7 +506,7 @@ Ranking de passagens da semana passada. Sem parâmetros. Mesmo formato de respos
 
 ### `GET /analytics/forecast` — Privada
 
-Forecast da campanha e da semana atual (modelo do `forecast_automatico_crm.pdf`). Qualquer perfil logado; **não é das TVs**. O cálculo fica em [forecastCalculator.js](features/analytics/service/forecastCalculator.js) e as datas, os feriados, os pesos e os fatores, em [config/campaign.js](config/campaign.js).
+Forecast da campanha e da semana atual (modelo do `forecast_automatico_crm.pdf`). Qualquer perfil logado; **não é das TVs**. O cálculo fica em [forecastCalculator.js](features/analytics/service/forecastCalculator.js) as datas e os feriados, em [config/campaign.js](config/campaign.js), e os pesos e os fatores de cada setor, em [config/forecastModels.js](config/forecastModels.js).
 
 | Parâmetro | Onde | Valores | Descrição |
 |---|---|---|---|
@@ -515,7 +516,9 @@ Forecast da campanha e da semana atual (modelo do `forecast_automatico_crm.pdf`)
 - Campanha de **03/11 a 01/12/2026**. **Dias produtivos:** segunda a sábado, sem feriados (20/11 cai na campanha). Venda em domingo ou feriado conta no dia produtivo anterior.
 - **Hoje** conta como dia já passado (as vendas de hoje já estão no vendido). Dias restantes = dias produtivos depois de hoje até 01/12.
 - **Vendido** = todas as vendas ativas (igual ao total da meta, inclusive as de antes de 03/11). As médias usam só os dias produtivos da campanha, **contando os dias sem venda como R$ 0**.
-- **Ritmo** = média dos últimos 7 dias produtivos × 50% + dos últimos 30 × 30% + da campanha × 20%.
+- **Um modelo por setor** ([config/forecastModels.js](config/forecastModels.js)): o B2B usa as fórmulas do PDF; o **B2G, por enquanto, usa o modelo do B2B** (`basedOn: "b2b"`) até chegarem as fórmulas dele. Venda sem setor usa o B2B. A resposta traz `model: { key, label, basedOn }`.
+- **Todos (sem setor)** = soma dos forecasts do B2B e do B2G, cada um com o seu modelo: ritmo, cenários (da campanha e da semana) e trajetória somados; ritmo necessário, cobertura, gap e probabilidade recalculados com a soma (o desvio é das vendas somadas). `model.key = "total"` e `model.parts` lista os modelos usados. Com modelos iguais dá o mesmo que calcular tudo junto. Se os pesos dos setores forem diferentes, `pace.weights` vem `null`.
+- **Ritmo** (modelo do B2B) = média dos últimos 7 dias produtivos × 50% + dos últimos 30 × 30% + da campanha × 20%.
 - **Cenários** = vendido + ritmo × fator × dias restantes (pessimista 0,8; realista 1; otimista 1,2).
 - **Ritmo necessário** = (meta − vendido) ÷ dias restantes. **Cobertura** = ritmo ÷ necessário (não é a chance de bater a meta). **Gap** = meta − realista (negativo = acima da meta).
 - **Probabilidade** = 1 − Normal(z), com z = (meta − realista) ÷ (desvio padrão diário × √dias restantes). O desvio é dos últimos 30 dias produtivos. Com menos de 2 dias → `null`. Meta batida → 100; campanha encerrada sem bater → 0.
@@ -840,12 +843,14 @@ Progresso do mês (vendas `ativa`, pelo `realizedAt` no horário de São Paulo, 
 ```json
 {
   "month": "2026-11", "today": "2026-11-09", "weeks": [], "days": ["2026-11-02", "..."], "black": { "active": true, "...": "..." },
+  "total": { "goal": 270000, "parts": { "farm": "...", "sales": "..." }, "month": "<progresso>", "forecast": "<forecast>",
+    "weeks": ["<progresso da semana>"], "cumulative": [] },
   "segments": [{ "segment": "b2b", "goal": 120000, "superPercent": 125,
     "parts": { "farm": { "goal": 48000, "...": "<progresso>" }, "sales": { "goal": 72000, "...": "<progresso>" } },
-    "month": "<progresso>", "weeks": ["<progresso da semana>"], "cumulative": [0, 1200] }],
+    "month": "<progresso>", "forecast": "<forecast>", "weeks": ["<progresso da semana>"], "cumulative": [0, 1200] }],
   "people": [{ "vendorId": "...", "segment": "b2b", "type": "sales", "name": "...", "job": "...", "imageUrl": "...",
     "teamId": "...", "teamName": "...", "level": "junior", "levelName": "Júnior",
-    "month": "<progresso>", "weeks": ["<progresso da semana>"], "cumulative": [] }],
+    "month": "<progresso>", "forecast": "<forecast>", "weeks": ["<progresso da semana>"], "cumulative": [] }],
   "teams": [{ "teamId": "...", "teamName": "...", "imageUrl": "...", "members": 4, "month": "<progresso>", "cumulative": [] }],
   "summary": { "people": 11, "reachedGoal": 3, "reachedSuper": 3, "reachedBlack": 2, "onPace": 4, "behind": 7 }
 }
@@ -858,7 +863,32 @@ Progresso do mês (vendas `ativa`, pelo `realizedAt` no horário de São Paulo, 
 - `tiers` da pessoa: a Meta, a Super e a Black são as que o gestor salvou (`superGoal`/`blackGoal`). Mês salvo antes desses campos: a Super e a Black da parte são divididas na proporção da Meta de cada um. Se a Black do setor no `.env` mudar depois do cadastro, a Black de cada pessoa acompanha na mesma proporção. Nas semanas, na proporção da Meta semanal.
 - `pace` é em relação à Meta (faixa normal): `expected` = quanto já deveria ter até hoje; `neededPerDay` = quanto falta ÷ dias que faltam; `projection` = ritmo atual até o fim.
 - `people` vem do mais perto para o mais longe da Meta; `teams` = soma das pessoas de cada time; `cumulative` = acumulado por dia (`days`).
+- `total`: os setores somados (o "Todos" do admin), no mesmo formato de um setor. `null` em mês sem meta.
 - Mês sem meta: listas vazias e `summary` zerado.
+
+`<forecast>` (no total, em cada setor e em cada pessoa): `{ productiveDays: { elapsed, remaining }, pace: { current, last7, last30, month }, scenarios: { pessimistic, realistic, optimistic }, dailyStdDev, tiers: { goal: { target, requiredPace, paceCoverage, gap, probability }, super: {...}, black: {...} }, trajectory: { pessimistic: [...], realistic: [...], optimistic: [...] } }`.
+
+- Mesmo cálculo do `/analytics/forecast` (`monthForecast` em [goalCalculator.js](features/goals/service/goalCalculator.js)), com o modelo do setor (`config/forecastModels.js`; o B2G usa o do B2B por enquanto) para o setor e as pessoas dele; o total é a soma dos setores (`combineMonthForecasts`), como no `/analytics/forecast`. Aplicado ao mês da meta: dias produtivos (segunda a sábado, sem feriados de `config/campaign.js`) dentro das semanas do mês; venda em domingo ou feriado entra no dia produtivo anterior; hoje conta como dia que passou.
+- `pace.current` = média dos últimos 7 dias produtivos × 50% + dos últimos 30 × 30% + do mês × 20%. `scenarios` = realizado + ritmo × fator (0,8 / 1 / 1,2) × dias produtivos que faltam.
+- `tiers`: uma entrada por faixa do mês (`available`). `requiredPace` = (faixa − realizado) ÷ dias produtivos que faltam (`null` sem dias); `paceCoverage` = ritmo ÷ necessário (%); `gap` = faixa − realista (negativo = acima); `probability` (%) = chance de chegar na faixa pela normal (desvio dos últimos 30 dias produtivos). Já batida → 100; mês encerrado sem bater → 0; menos de 2 dias produtivos → `null`.
+- `trajectory`: um valor por dia de `days`, `null` antes de hoje; de hoje em diante, o acumulado projetado em cada cenário.
+
+### `GET /goals/:month/history`
+
+Histórico mês a mês para o gráfico "Mensal": o mês escolhido e os anteriores (`months`, de 1 a 12; padrão 6; outro valor → `400`). Cada mês são as semanas que começam nele.
+
+```json
+{
+  "month": "2026-11", "black": { "...": "..." },
+  "months": [{ "month": "2026-10", "start": "2026-10-05", "end": "2026-11-01",
+    "total": { "realized": 6500, "tiers": { "goal": 10000, "super": 12000, "black": 0 } },
+    "segments": { "b2b": { "realized": 6500, "tiers": { "...": "..." } }, "b2g": { "realized": 0, "tiers": null } },
+    "people": [{ "vendorId": "...", "segment": "b2b", "type": "sales", "realized": 5500, "tiers": { "...": "..." } }] }]
+}
+```
+
+- Mês com meta no setor: conta as pessoas cadastradas, cada uma no tipo dela, com as faixas do cadastro (Black só no mês da campanha).
+- Mês sem meta no setor: conta os vendedores do setor pelo cargo de hoje, cada um no tipo do cargo, e `tiers` vem `null`. `total.tiers` é a soma dos setores com meta (`null` se nenhum tiver).
 
 ## Arquivos estáticos — `/public`
 

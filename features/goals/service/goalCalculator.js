@@ -9,6 +9,9 @@
 // - Super e Black descem para as pessoas da parte na proporção da Meta de cada uma (que vem dos pesos
 //   de senioridade) e para as semanas na proporção da Meta de cada semana.
 
+const { forecastModelOf } = require("../../../config/forecastModels");
+const { isProductiveDay, normalCdf } = require("../../analytics/service/forecastCalculator");
+
 const SAO_PAULO_OFFSET_MS = 3 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -203,7 +206,139 @@ const paceOf = ({ realized, goal, start, end, today }) => {
   };
 };
 
+const roundMoney = (value) => Math.round(value) / 100;
+const roundPercent = (ratio) => Math.round(ratio * 10000) / 100;
+const sumOf = (values) => values.reduce((total, value) => total + value, 0);
+const averageOf = (values) => (values.length ? sumOf(values) / values.length : 0);
+const stdDevOf = (values) => {
+  if (values.length < 2) return null;
+  const mean = averageOf(values);
+  return Math.sqrt(sumOf(values.map((value) => (value - mean) ** 2)) / (values.length - 1));
+};
+
+// Chance (%) de chegar ao alvo no fim do mês: z = (alvo − realista) ÷ (desvio diário × raiz(dias que faltam))
+const chanceOf = ({ realized, target, realistic, stdDev, daysLeft }) => {
+  if (realized >= target) return 100;
+  if (daysLeft === 0) return 0;
+  if (stdDev === null) return null;
+  if (stdDev === 0) return realistic >= target ? 100 : 0;
+  return roundPercent(1 - normalCdf((target - realistic) / (stdDev * Math.sqrt(daysLeft))));
+};
+
+// Forecast do mês da meta no mesmo modelo do forecast da campanha (/analytics/forecast): dias produtivos
+// (segunda a sábado, sem feriado), venda em domingo ou feriado no dia produtivo anterior, hoje conta como
+// dia que passou, ritmo = média dos últimos 7 dias produtivos × 50% + dos últimos 30 × 30% + do mês × 20%
+// (pesos do modelo do setor, config/forecastModels.js), cenários com os fatores do modelo e a chance de bater
+// cada faixa pela normal. dailyCents: centavos de cada dia de `days` (dias do mês da meta)
+const tierForecastsOf = ({ realized, pace, realistic, stdDev, daysLeft, tiers }) =>
+  Object.fromEntries(
+    TIERS.filter((tier) => tiers[tier] > 0).map((tier) => {
+      const target = toCents(tiers[tier]);
+      const requiredPace = daysLeft > 0 ? Math.max(target - realized, 0) / daysLeft : null;
+      return [
+        tier,
+        {
+          target: fromCents(target),
+          requiredPace: requiredPace === null ? null : roundMoney(requiredPace),
+          paceCoverage: requiredPace ? roundPercent(pace / requiredPace) : null,
+          gap: roundMoney(target - realistic),
+          probability: chanceOf({ realized, target, realistic, stdDev, daysLeft }),
+        },
+      ];
+    }),
+  );
+
+const monthForecast = ({ days, dailyCents, tiers, today, model = forecastModelOf("b2b") }) => {
+  const { paceWeights: PACE_WEIGHTS, scenarioFactors: SCENARIO_FACTORS } = model;
+  const productive = days.filter(isProductiveDay);
+  const elapsed = productive.filter((day) => day <= today);
+  const remaining = productive.filter((day) => day > today);
+
+  const perDay = new Map(elapsed.map((day) => [day, 0]));
+  days.forEach((day, index) => {
+    if (!elapsed.length || day > today) return;
+    let target = elapsed[0];
+    for (const productiveDay of elapsed) {
+      if (productiveDay > day) break;
+      target = productiveDay;
+    }
+    perDay.set(target, perDay.get(target) + dailyCents[index]);
+  });
+  const values = elapsed.map((day) => perDay.get(day));
+
+  const realized = sumOf(dailyCents);
+  const averages = { last7: averageOf(values.slice(-7)), last30: averageOf(values.slice(-30)), campaign: averageOf(values) };
+  const pace = sumOf(Object.keys(PACE_WEIGHTS).map((key) => averages[key] * PACE_WEIGHTS[key]));
+  const daysLeft = remaining.length;
+  const scenarioCents = Object.fromEntries(
+    Object.entries(SCENARIO_FACTORS).map(([name, factor]) => [name, realized + pace * factor * daysLeft]),
+  );
+  const stdDev = stdDevOf(values.slice(-30));
+
+  const tierForecast = tierForecastsOf({ realized, pace, realistic: scenarioCents.realistic, stdDev, daysLeft, tiers });
+
+  const trajectoryFor = (factor) => {
+    let count = 0;
+    return days.map((day) => {
+      if (day < today) return null;
+      if (day > today && isProductiveDay(day)) count += 1;
+      return roundMoney(realized + pace * factor * count);
+    });
+  };
+
+  return {
+    model: { key: model.key, label: model.label, basedOn: model.basedOn },
+    productiveDays: { elapsed: elapsed.length, remaining: daysLeft },
+    pace: {
+      current: roundMoney(pace),
+      last7: roundMoney(averages.last7),
+      last30: roundMoney(averages.last30),
+      month: roundMoney(averages.campaign),
+    },
+    scenarios: Object.fromEntries(Object.entries(scenarioCents).map(([name, cents]) => [name, roundMoney(cents)])),
+    dailyStdDev: stdDev === null ? null : roundMoney(stdDev),
+    tiers: tierForecast,
+    trajectory: Object.fromEntries(
+      Object.entries(SCENARIO_FACTORS).map(([name, factor]) => [name, trajectoryFor(factor)]),
+    ),
+  };
+};
+
+// Forecast do total = soma dos forecasts dos setores (cada um com o seu modelo): ritmo, cenários e trajetória
+// somados; o desvio vem das vendas somadas e a chance de cada faixa é recalculada com a soma
+const combineMonthForecasts = ({ days, dailyCents, tiers, today, parts }) => {
+  const base = monthForecast({ days, dailyCents, tiers, today });
+  const pace = sumOf(parts.map((part) => toCents(part.pace.current)));
+  const scenarioCents = Object.fromEntries(
+    Object.keys(parts[0].scenarios).map((name) => [name, sumOf(parts.map((part) => toCents(part.scenarios[name])))]),
+  );
+  const sumSeries = (name) =>
+    days.map((_, index) =>
+      parts.every((part) => part.trajectory[name][index] === null)
+        ? null
+        : fromCents(sumOf(parts.map((part) => toCents(part.trajectory[name][index] ?? 0)))),
+    );
+
+  return {
+    ...base,
+    model: { key: "total", label: "Soma dos forecasts dos setores", basedOn: null, parts: parts.map((part) => part.model) },
+    pace: { ...base.pace, current: fromCents(pace) },
+    scenarios: Object.fromEntries(Object.entries(scenarioCents).map(([name, cents]) => [name, fromCents(cents)])),
+    tiers: tierForecastsOf({
+      realized: sumOf(dailyCents),
+      pace,
+      realistic: scenarioCents.realistic,
+      stdDev: base.dailyStdDev === null ? null : toCents(base.dailyStdDev),
+      daysLeft: base.productiveDays.remaining,
+      tiers,
+    }),
+    trajectory: Object.fromEntries(Object.keys(base.trajectory).map((name) => [name, sumSeries(name)])),
+  };
+};
+
 module.exports = {
+  monthForecast,
+  combineMonthForecasts,
   TIERS,
   dayKeyOf,
   addDays,

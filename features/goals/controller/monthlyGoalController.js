@@ -23,6 +23,13 @@ exports.getProgress = async (req, res, next) => {
   return res.status(200).json({ success: true, data, message: "Progresso das metas recuperado com sucesso" });
 };
 
+exports.getHistory = async (req, res, next) => {
+  const months = req.query.months === undefined ? 6 : Number(req.query.months);
+  if (!Number.isInteger(months) || months < 1 || months > 12) throw ValidationError("Quantidade de meses inválida (1 a 12)");
+  const data = await MonthlyGoalService.getHistory(monthOf(req), months);
+  return res.status(200).json({ success: true, data, message: "Histórico das metas recuperado com sucesso" });
+};
+
 exports.saveMonth = async (req, res, next) => {
   const data = await MonthlyGoalService.saveMonth(monthOf(req), segmentOf(req), req.data, req.user.email);
   return res.status(200).json({ success: true, data, message: "Metas salvas com sucesso" });

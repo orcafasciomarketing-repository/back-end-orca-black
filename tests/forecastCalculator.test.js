@@ -1,7 +1,13 @@
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 
-const { buildForecast, normalCdf, isProductiveDay } = require("../features/analytics/service/forecastCalculator");
+const {
+  buildForecast,
+  combineForecasts,
+  normalCdf,
+  isProductiveDay,
+} = require("../features/analytics/service/forecastCalculator");
+const { FORECAST_MODELS, forecastModelOf } = require("../config/forecastModels");
 
 // Campanha de 03/11 a 01/12/2026 (config/campaign.js). Dias produtivos: segunda a sábado,
 // sem o feriado de 20/11 → 24 dias no total
@@ -196,5 +202,85 @@ describe("forecastCalculator", () => {
     assert.ok(Math.abs(normalCdf(0) - 0.5) < 1e-7);
     assert.ok(Math.abs(normalCdf(1.96) - 0.975) < 1e-4);
     assert.ok(Math.abs(normalCdf(-1) - 0.158655) < 1e-5);
+  });
+
+  describe("um modelo por setor", () => {
+    it("B2B usa as fórmulas do PDF; B2G, por enquanto, as mesmas do B2B; venda sem setor usa o B2B", () => {
+      assert.deepEqual(FORECAST_MODELS.b2b.paceWeights, { last7: 0.5, last30: 0.3, campaign: 0.2 });
+      assert.equal(FORECAST_MODELS.b2g.basedOn, "b2b");
+      assert.deepEqual(FORECAST_MODELS.b2g.paceWeights, FORECAST_MODELS.b2b.paceWeights);
+      assert.deepEqual(FORECAST_MODELS.b2g.scenarioFactors, FORECAST_MODELS.b2b.scenarioFactors);
+      assert.equal(forecastModelOf(null).key, "b2b");
+    });
+
+    it("o cálculo usa os pesos e os fatores do modelo recebido", () => {
+      const model = {
+        ...FORECAST_MODELS.b2b,
+        key: "teste",
+        paceWeights: { last7: 1, last30: 0, campaign: 0 },
+        scenarioFactors: { pessimistic: 0.5, realistic: 1, optimistic: 2 },
+      };
+      const sales = [sale("2026-11-03", 1000), sale("2026-11-04", 3000)];
+      const forecast = buildForecast({ sales, goal: 100000, now: at("2026-11-04"), model });
+
+      assert.equal(forecast.model.key, "teste");
+      assert.equal(forecast.campaign.pace.current, 2000);
+      assert.deepEqual(forecast.campaign.scenarios, { pessimistic: 26000, realistic: 48000, optimistic: 92000 });
+    });
+
+    it("total = soma dos setores; com os mesmos modelos dá o mesmo que calcular tudo junto", () => {
+      const b2b = [sale("2026-11-03", 39248), sale("2026-11-05", 10000)];
+      const b2g = [sale("2026-11-04", 20000), sale("2026-11-06", 5000)];
+      const now = at("2026-11-06");
+      const together = buildForecast({ sales: [...b2b, ...b2g], goal: 300000, now });
+      const combined = combineForecasts({
+        total: together,
+        parts: [
+          buildForecast({ sales: b2b, goal: 0, now, model: forecastModelOf("b2b") }),
+          buildForecast({ sales: b2g, goal: 0, now, model: forecastModelOf("b2g") }),
+        ],
+        goal: 300000,
+      });
+
+      assert.equal(combined.model.key, "total");
+      assert.deepEqual(
+        combined.model.parts.map((part) => [part.key, part.basedOn]),
+        [
+          ["b2b", null],
+          ["b2g", "b2b"],
+        ],
+      );
+      assert.equal(combined.campaign.pace.current, together.campaign.pace.current);
+      assert.deepEqual(combined.campaign.scenarios, together.campaign.scenarios);
+      assert.equal(combined.campaign.probability, together.campaign.probability);
+      assert.deepEqual(combined.trajectory.realistic, together.trajectory.realistic);
+      assert.deepEqual(combined.campaign.pace.weights, together.campaign.pace.weights);
+    });
+
+    it("com modelos diferentes, o total soma os cenários de cada um e fica sem peso único", () => {
+      const now = at("2026-11-06");
+      const other = {
+        ...FORECAST_MODELS.b2b,
+        key: "b2g",
+        paceWeights: { last7: 1, last30: 0, campaign: 0 },
+        scenarioFactors: { pessimistic: 1, realistic: 1, optimistic: 1 },
+      };
+      const parts = [
+        buildForecast({ sales: [sale("2026-11-03", 10000)], goal: 0, now }),
+        buildForecast({ sales: [sale("2026-11-04", 6000)], goal: 0, now, model: other }),
+      ];
+      const combined = combineForecasts({
+        total: buildForecast({ sales: [sale("2026-11-03", 10000), sale("2026-11-04", 6000)], goal: 100000, now }),
+        parts,
+        goal: 100000,
+      });
+
+      assert.equal(
+        combined.campaign.scenarios.realistic,
+        parts[0].campaign.scenarios.realistic + parts[1].campaign.scenarios.realistic,
+      );
+      assert.equal(combined.campaign.pace.weights, null);
+      assert.equal(combined.campaign.gap, 100000 - combined.campaign.scenarios.realistic);
+    });
   });
 });

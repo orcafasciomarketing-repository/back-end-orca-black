@@ -5,7 +5,8 @@ const TeamsService = require("../../teams/service/teamsService");
 
 const { getSalePoints, getPassagePoints } = require("../../../config/points.js");
 const { BLACK_FRIDAY_GOAL, SEGMENT_GOALS } = require("../../../config/goal.js");
-const { buildForecast } = require("./forecastCalculator");
+const { buildForecast, combineForecasts } = require("./forecastCalculator");
+const { forecastModelOf } = require("../../../config/forecastModels");
 
 const SAO_PAULO_OFFSET_MS = 3 * 60 * 60 * 1000;
 
@@ -189,10 +190,25 @@ exports.getForecast = async (segment, now = new Date()) => {
   const segmentGoal = segment ? SEGMENT_GOALS[segment] : 0;
   const goal = segmentGoal > 0 ? segmentGoal : BLACK_FRIDAY_GOAL;
 
+  // Setor escolhido: o modelo dele. "Todos": a soma do forecast de cada setor, cada um com o seu modelo
+  // (venda sem setor entra no B2B)
+  if (segment) {
+    return {
+      segment,
+      goalIsTotal: !(segmentGoal > 0),
+      ...buildForecast({ sales: segmentSales, goal, now, model: forecastModelOf(segment) }),
+    };
+  }
+
+  const salesOf = (key) => sales.filter((sale) => (sale.segment === "b2g" ? "b2g" : "b2b") === key);
+  const parts = ["b2b", "b2g"].map((key) =>
+    buildForecast({ sales: salesOf(key), goal: 0, now, model: forecastModelOf(key) }),
+  );
+
   return {
     segment,
-    goalIsTotal: !(segmentGoal > 0),
-    ...buildForecast({ sales: segmentSales, goal, now }),
+    goalIsTotal: true,
+    ...combineForecasts({ total: buildForecast({ sales, goal, now }), parts, goal }),
   };
 };
 

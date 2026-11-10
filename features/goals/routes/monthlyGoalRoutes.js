@@ -12,6 +12,7 @@ router.use(authMiddleware, requireAdmin);
 
 router.get("/:month", MonthlyGoalController.getMonth);
 router.get("/:month/progress", MonthlyGoalController.getProgress);
+router.get("/:month/history", MonthlyGoalController.getHistory);
 router.put("/:month/:segment", validateSchema(SaveMonthlyGoalSchema), MonthlyGoalController.saveMonth);
 router.delete("/:month/:segment", MonthlyGoalController.deleteMonth);
 

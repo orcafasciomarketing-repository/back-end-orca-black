@@ -68,6 +68,17 @@ describe("GET /analytics/forecast", () => {
     assert.equal(body.data.goal, TEST_GOAL);
     assert.equal(body.data.goalIsTotal, true);
     assert.equal(body.data.campaign.sold, 1500);
+    assert.equal(body.data.model.key, "total");
+    assert.deepEqual(
+      body.data.model.parts.map((part) => part.key),
+      ["b2b", "b2g"],
+    );
+  });
+
+  it("cada setor usa o seu modelo; o B2G, por enquanto, o do B2B", async () => {
+    assert.equal((await getForecast(tokens.admin, "?segment=b2b")).body.data.model.key, "b2b");
+    const b2g = (await getForecast(tokens.admin, "?segment=b2g")).body.data.model;
+    assert.deepEqual([b2g.key, b2g.basedOn], ["b2g", "b2b"]);
   });
 
   it("admin com ?segment=b2g: só B2G, contra a meta do B2G", async () => {
