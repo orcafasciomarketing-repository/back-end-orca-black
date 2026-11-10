@@ -5,10 +5,15 @@ exports.save = async (tokenData) => {
 };
 
 exports.rotateTokenAtomic = async (oldToken) => {
+  const now = new Date();
   return await Token.findOneAndUpdate(
-    { token: oldToken, revokedAt: null, expiresAt: { $gt: new Date() } },
-    { $set: { revokedAt: new Date() } },
+    { token: oldToken, revokedAt: null, expiresAt: { $gt: now } },
+    { $set: { revokedAt: now, rotatedAt: now } },
   );
+};
+
+exports.findByToken = async (token) => {
+  return await Token.findOne({ token }).lean();
 };
 
 exports.replaceToken = async (oldToken, newToken) => {
@@ -21,7 +26,7 @@ exports.replaceToken = async (oldToken, newToken) => {
 };
 
 exports.revokeAllTokens = async (userId) => {
-  return await Token.updateMany({ userId }, { $set: { revokedAt: new Date() } });
+  return await Token.updateMany({ userId, revokedAt: null }, { $set: { revokedAt: new Date() } });
 };
 
 exports.revokeToken = async (token) => {

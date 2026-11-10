@@ -2,6 +2,7 @@ const SalesRepository = require("../repository/salesRepository");
 const VendorRepository = require("../../vendors/repository/vendorsRepository");
 const SdrRepository = require("../../sdr/repository/sdrRepository");
 const { broadcast } = require("../../../shared/sseManager");
+const activeSalesCache = require("../../../shared/activeSalesCache");
 const {
   translateSheetRow,
   findSaleDataErrors,
@@ -69,16 +70,19 @@ exports.sumActiveValueBySegment = async () => {
 };
 
 // period: "week" (semana atual), "lastWeek" (semana passada) ou "all" (campanha toda)
+// Com cache curto (shared/activeSalesCache.js): várias telas pedindo ao mesmo tempo fazem uma busca só
 exports.findActiveByPeriod = async (period) => {
   if (period === "all") {
-    return await SalesRepository.findActiveByRealizedAt();
+    return await activeSalesCache.cached("all", () => SalesRepository.findActiveByRealizedAt());
   }
 
   const { startOfWeek, finalOfWeek } = getWeekRange(
     period === "lastWeek" ? 1 : 0,
   );
 
-  return await SalesRepository.findActiveByRealizedAt(startOfWeek, finalOfWeek);
+  return await activeSalesCache.cached(`${new Date(startOfWeek).getTime()}-${new Date(finalOfWeek).getTime()}`, () =>
+    SalesRepository.findActiveByRealizedAt(startOfWeek, finalOfWeek),
+  );
 };
 
 const toPopupPerson = (sdr) => ({

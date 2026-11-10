@@ -73,12 +73,63 @@ describe("Sair (/auth/logout) e trocar a própria senha (/auth/change-password)"
 
     it("sair de uma sessão não derruba a outra (outro navegador)", async () => {
       const first = await login();
-      const second = await request("POST", "/auth/login", { body: { email: "pessoa@teste.com", password: "123456" } });
-      await Token.updateMany({}, { $set: { revokedAt: null } });
+      const second = await login();
 
       await request("POST", "/auth/logout", { cookie: first.cookie });
 
       assert.equal((await request("POST", "/auth/refresh", { cookie: second.cookie })).status, 200);
+    });
+  });
+
+  describe("várias sessões na mesma conta", () => {
+    const refresh = (cookie) => request("POST", "/auth/refresh", { cookie });
+
+    it("entrar em outro aparelho não derruba quem já estava logado", async () => {
+      const first = await login();
+      const second = await login();
+
+      assert.equal((await refresh(first.cookie)).status, 200);
+      assert.equal((await refresh(second.cookie)).status, 200);
+    });
+
+    it("duas abas renovando ao mesmo tempo com o mesmo cookie: as duas continuam logadas", async () => {
+      const { cookie } = await login();
+
+      const [a, b] = await Promise.all([refresh(cookie), refresh(cookie)]);
+
+      assert.deepEqual([a.status, b.status], [200, 200]);
+      assert.equal((await refresh(a.cookie)).status, 200);
+      assert.equal((await refresh(b.cookie)).status, 200);
+    });
+
+    it("o token trocado só vale de novo por alguns segundos", async () => {
+      const { cookie } = await login();
+      await refresh(cookie);
+      await Token.updateMany({ rotatedAt: { $ne: null } }, { $set: { rotatedAt: new Date(Date.now() - 60 * 1000) } });
+
+      assert.equal((await refresh(cookie)).status, 401);
+    });
+
+    it("sair ou trocar a senha encerra também a tolerância do token trocado", async () => {
+      const first = await login();
+      const rotated = await refresh(first.cookie);
+      await request("POST", "/auth/logout", { cookie: rotated.cookie });
+      assert.equal((await refresh(first.cookie)).status, 401);
+
+      const second = await login();
+      const secondRotated = await refresh(second.cookie);
+      const changed = await request("POST", "/auth/change-password", {
+        token: secondRotated.body.token,
+        body: { currentPassword: "123456", password: "nova123", passwordConfirmation: "nova123" },
+      });
+      assert.equal(changed.status, 200);
+      assert.equal((await refresh(second.cookie)).status, 401);
+    });
+
+    it("token vencido é apagado sozinho (índice TTL) e o token é único", async () => {
+      const indexes = await Token.collection.indexes();
+      assert.ok(indexes.some((index) => index.key.expiresAt === 1 && index.expireAfterSeconds === 0));
+      assert.ok(indexes.some((index) => index.key.token === 1 && index.unique));
     });
   });
 

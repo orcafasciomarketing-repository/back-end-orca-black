@@ -469,6 +469,14 @@ exports.getProgress = async (month, now = new Date()) => {
 
 exports.typeOfJob = typeOfJob;
 
+// Faixas do mês (Meta, Super e, no mês da campanha, Black) do setor ou dos setores somados; null sem meta
+exports.getMonthTiers = async (month, segment = null) => {
+  const configs = (await MonthlyGoalRepository.findByMonth(month)).filter((config) => !segment || config.segment === segment);
+  if (!configs.length) return null;
+  const black = blackInfo(month);
+  return sumTiers(configs.map((config) => segmentTiers(typeTiers(black.active ? withSectorBlack(config) : config, black.active))));
+};
+
 const shiftMonth = (month, amount) => {
   const [year, number] = month.split("-").map(Number);
   const date = new Date(Date.UTC(year, number - 1 + amount, 1));

@@ -1,5 +1,7 @@
 const { Schema, model } = require("mongoose");
 
+const activeSalesCache = require("../../../shared/activeSalesCache");
+
 const saleSchema = new Schema(
   {
     rdDealName: {
@@ -63,6 +65,18 @@ const saleSchema = new Schema(
     },
   },
   { timestamps: true },
+);
+
+// Buscas das telas: vendas ativas por data, e as de cada vendedor
+saleSchema.index({ dealStatus: 1, realizedAt: 1 });
+saleSchema.index({ vendorId: 1 });
+
+// Qualquer gravação em vendas limpa o cache das vendas ativas (shared/activeSalesCache.js)
+const clearActiveSalesCache = () => activeSalesCache.clear();
+saleSchema.post(["save", "insertMany", "bulkWrite"], clearActiveSalesCache);
+saleSchema.post(
+  ["updateOne", "updateMany", "deleteOne", "deleteMany", "findOneAndUpdate", "findOneAndDelete", "findOneAndReplace", "replaceOne"],
+  clearActiveSalesCache,
 );
 
 module.exports = model("Sales", saleSchema);

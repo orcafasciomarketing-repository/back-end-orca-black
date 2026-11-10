@@ -19,6 +19,15 @@ const app = express();
 // No Render a requisição passa por 1 proxy: assim o req.ip é o IP de quem chamou
 // (usado pelo limite de requisições do POST /logs), e não o do proxy
 app.set("trust proxy", 1);
+app.disable("x-powered-by");
+
+// Cabeçalhos de segurança básicos (a API só devolve JSON e as imagens de /public)
+app.use((req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  next();
+});
 
 app.use(bodyParser.json());
 app.use(cookieParser());
@@ -63,10 +72,15 @@ app.use("/me", meRoutes);
 app.use("/prizes", prizeRoutes);
 app.use("/goals", monthlyGoalRoutes);
 
+// Erro esperado (validação, 401, 403, 404...) devolve a mensagem dele. Erro inesperado (500) fica só no log
+// do servidor: a resposta não mostra detalhes internos (banco, código)
 app.use((err, req, res, next) => {
-  const status = err.status || 500;
-  const message = err.message || "Erro interno do servidor";
-  res.status(status).json({ error: message });
+  const status = err.status || err.statusCode || 500;
+  if (status >= 500) {
+    console.error(err);
+    return res.status(status).json({ error: "Erro interno do servidor" });
+  }
+  res.status(status).json({ error: err.message || "Requisição inválida" });
 });
 
 module.exports = { app };

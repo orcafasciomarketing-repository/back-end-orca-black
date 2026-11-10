@@ -49,8 +49,7 @@ exports.loginUser = async (userData) => {
     throw UnauthorizedError();
   }
 
-  await RefreshTokenService.revokeAllTokens(user._id);
-
+  // Cada login é uma sessão nova; as outras sessões da conta (outro aparelho, outra pessoa) continuam
   const accessToken = AccessTokenService.generateAccessToken({ id: user._id, email: user.email });
   const refreshToken = await RefreshTokenService.createToken(user._id);
 

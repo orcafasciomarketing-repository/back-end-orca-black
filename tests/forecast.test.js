@@ -11,6 +11,7 @@ const {
 } = require("./helpers/testApp");
 
 const Sales = require("../features/sale/model/salesModel");
+const MonthlyGoal = require("../features/goals/model/monthlyGoalModel");
 const User = require("../features/user/model/userModel");
 
 // As contas do forecast estão em forecastCalculator.test.js. Aqui: login, setor de cada perfil e meta
@@ -120,5 +121,52 @@ describe("GET /analytics/forecast", () => {
     assert.equal(body.data.campaign.start, "2026-11-03");
     assert.equal(body.data.campaign.end, "2026-12-01");
     assert.equal(body.data.trajectory.days.length, 24);
+  });
+
+  describe("?month=AAAA-MM (forecast do mês)", () => {
+    after(async () => {
+      await MonthlyGoal.deleteMany({});
+    });
+
+    it("mês sem meta cadastrada: só as vendas do mês, meta 0", async () => {
+      const { status, body } = await getForecast(tokens.admin, "?month=2026-11");
+
+      assert.equal(status, 200);
+      assert.deepEqual(body.data.period, { type: "month", month: "2026-11", start: "2026-11-02", end: "2026-12-06" });
+      assert.equal(body.data.campaign.start, "2026-11-02");
+      assert.equal(body.data.campaign.end, "2026-12-06");
+      assert.equal(body.data.campaign.sold, 1500);
+      assert.equal(body.data.goal, 0);
+      assert.equal(body.data.monthTiers, null);
+    });
+
+    it("com meta cadastrada: a Meta do setor (ou a soma) e as faixas; mês sem vendas → vendido 0", async () => {
+      await MonthlyGoal.create({
+        month: "2026-10",
+        segment: "b2b",
+        farmGoal: 6000,
+        salesGoal: 4000,
+        superPercent: 120,
+        levels: [{ key: "jr", name: "Júnior", weight: 1 }],
+        people: [],
+      });
+
+      const b2b = (await getForecast(tokens.admin, "?month=2026-10&segment=b2b")).body.data;
+      assert.equal(b2b.goal, 10000);
+      assert.deepEqual(b2b.monthTiers, { goal: 10000, super: 12000, black: 0 });
+      assert.equal(b2b.campaign.sold, 0);
+      assert.equal(b2b.model.key, "b2b");
+
+      const all = (await getForecast(tokens.admin, "?month=2026-10")).body.data;
+      assert.equal(all.goal, 10000);
+      assert.equal(all.model.key, "total");
+      assert.equal((await getForecast(tokens.admin, "?month=2026-10&segment=b2g")).body.data.goal, 0);
+    });
+
+    it("b2b continua preso ao próprio setor; mês inválido → 400", async () => {
+      assert.equal((await getForecast(tokens.b2b, "?month=2026-11&segment=b2g")).body.data.segment, "b2b");
+      assert.equal((await getForecast(tokens.admin, "?month=2026-13")).status, 400);
+      assert.equal((await getForecast(tokens.admin, "?month=novembro")).status, 400);
+    });
   });
 });

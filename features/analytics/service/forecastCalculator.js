@@ -1,6 +1,10 @@
 // Cálculo do forecast (ver forecast_automatico_crm.pdf). Funções puras: recebem as
 // vendas já buscadas e o "agora", então dá para testar cada fórmula com números exatos.
-const { CAMPAIGN_START_DAY, CAMPAIGN_END_DAY, HOLIDAYS } = require("../../../config/campaign");
+const {
+  CAMPAIGN_START_DAY: CAMPAIGN_START,
+  CAMPAIGN_END_DAY: CAMPAIGN_END,
+  HOLIDAYS,
+} = require("../../../config/campaign");
 const { forecastModelOf } = require("../../../config/forecastModels");
 
 // O Brasil não tem mais horário de verão: São Paulo é sempre UTC-3
@@ -76,12 +80,12 @@ const goalProbability = ({ sold, goal, realistic, stdDev, daysLeft }) => {
   return 1 - normalCdf(z);
 };
 
-// sales: vendas ativas ({ value, realizedAt }); goal: meta do período da campanha
-const buildWeekGoal = ({ sales, goal, weekStart, weekEnd, weekSold, weekDaysLeft }) => {
-  const from = weekStart > CAMPAIGN_START_DAY ? weekStart : CAMPAIGN_START_DAY;
+// sales: vendas ativas ({ value, realizedAt }); goal: meta do período (campanha ou mês)
+const buildWeekGoal = ({ sales, goal, weekStart, weekEnd, weekSold, weekDaysLeft, start, end }) => {
+  const from = weekStart > start ? weekStart : start;
   if (goal <= 0 || from > weekEnd) return null;
 
-  const daysFromWeek = productiveDaysBetween(from, CAMPAIGN_END_DAY).length;
+  const daysFromWeek = productiveDaysBetween(from, end).length;
   const weekDays = productiveDaysBetween(from, weekEnd).length;
   if (!daysFromWeek || !weekDays) return null;
 
@@ -102,7 +106,15 @@ const buildWeekGoal = ({ sales, goal, weekStart, weekEnd, weekSold, weekDaysLeft
 const modelInfo = (model) => ({ key: model.key, label: model.label, basedOn: model.basedOn });
 
 // model: o modelo do setor (config/forecastModels.js); sem ele, o do B2B
-exports.buildForecast = ({ sales, goal, now = new Date(), model = forecastModelOf("b2b") }) => {
+// start/end: período do forecast (AAAA-MM-DD); sem eles, a campanha
+exports.buildForecast = ({
+  sales,
+  goal,
+  now = new Date(),
+  model = forecastModelOf("b2b"),
+  start: CAMPAIGN_START_DAY = CAMPAIGN_START,
+  end: CAMPAIGN_END_DAY = CAMPAIGN_END,
+}) => {
   const { paceWeights: PACE_WEIGHTS, scenarioFactors: SCENARIO_FACTORS } = model;
   const today = dayKeyOf(now);
   const hasStarted = today >= CAMPAIGN_START_DAY;
@@ -191,7 +203,16 @@ exports.buildForecast = ({ sales, goal, now = new Date(), model = forecastModelO
       remainingDays: weekDaysLeft,
       scenarios: buildScenarios(weekSold, pace, weekDaysLeft, SCENARIO_FACTORS),
     },
-    weekGoal: buildWeekGoal({ sales, goal, weekStart, weekEnd, weekSold, weekDaysLeft }),
+    weekGoal: buildWeekGoal({
+      sales,
+      goal,
+      weekStart,
+      weekEnd,
+      weekSold,
+      weekDaysLeft,
+      start: CAMPAIGN_START_DAY,
+      end: CAMPAIGN_END_DAY,
+    }),
     trajectory: {
       days: [...elapsedDays, ...remainingDays],
       actual: [...actual, ...remainingDays.map(() => null)],

@@ -88,6 +88,13 @@ O middleware busca o usuário no banco a cada requisição: o perfil vem do banc
 - Usuário sem o campo `role` (criado antes dos perfis) é tratado como `admin`. As rotas públicas (TVs) não mudam com o perfil.
 - `403` responde `{ "error": "Sem permissão para acessar" }`.
 
+## Segurança e carga
+
+- **Cabeçalhos:** toda resposta leva `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` e `Referrer-Policy: no-referrer`; o `X-Powered-By` foi desligado.
+- **Erros:** erro esperado (400, 401, 403, 404, 409, 429) devolve a mensagem dele. Erro inesperado (500) devolve só `{ "error": "Erro interno do servidor" }` e o detalhe vai para o log do servidor.
+- **Cache curto das vendas ativas** ([shared/activeSalesCache.js](shared/activeSalesCache.js)): quando chega uma venda, todas as telas abertas recarregam juntas; as buscas iguais de vendas ativas dentro de 5 segundos viram uma só. Qualquer gravação em vendas (nova, cancelada, importada, apagada) limpa o cache na hora, então nenhuma tela vê dado velho.
+- **Índices em vendas:** `{ dealStatus, realizedAt }` e `{ vendorId }`.
+
 ## CORS
 
 Só as origens listadas em [app.js](app.js) podem chamar a API pelo navegador. Origem = protocolo + endereço + **porta** (`http://localhost:5173` e `http://localhost:5174` são origens diferentes).
@@ -104,6 +111,9 @@ Não existe mais cadastro aberto (`/auth/register` foi removida → 404): quem c
 
 Autentica o usuário. Grava o cookie `refreshToken` (httpOnly). O `user` da resposta traz o `role` (`admin`, `b2b` ou `b2g`).
 
+- **Várias sessões por conta:** cada login abre uma sessão nova e **não derruba as outras** (outro aparelho, outra aba, outra pessoa usando a mesma conta). As sessões só caem ao sair (`/auth/logout`, só aquela), ao trocar a senha, ao mudar o perfil ou a senha pelo admin e ao excluir o usuário.
+- **Limite de tentativas erradas:** 10 respostas `401` a cada 15 minutos por IP + e-mail; a 11ª tentativa recebe `429` ("Muitas tentativas de login…"), mesmo com a senha certa, até a janela passar. Um login certo zera a contagem. Como conta por e-mail, várias pessoas do mesmo escritório (mesmo IP) não se bloqueiam.
+
 **Body** (validado por `LoginSchema`, não aceita campos extras):
 
 | Campo | Tipo | Obrigatório | Descrição |
@@ -115,7 +125,10 @@ Autentica o usuário. Grava o cookie `refreshToken` (httpOnly). O `user` da resp
 
 ### `POST /auth/refresh` — Pública (exige cookie)
 
-Gera um novo access token a partir do refresh token e renova o cookie.
+Gera um novo access token a partir do refresh token e renova o cookie (o token antigo é trocado por um novo).
+
+- **Tolerância entre abas:** duas abas do mesmo navegador podem renovar ao mesmo tempo com o mesmo cookie. O token que acabou de ser trocado ainda vale por **30 segundos**, para a segunda aba não ser deslogada. Não vale se a sessão foi encerrada nesse meio-tempo (sair, trocar a senha, perfil ou exclusão).
+- Os refresh tokens vencidos são apagados sozinhos pelo MongoDB (índice TTL em `expiresAt`), e o campo `token` tem índice único.
 
 | Parâmetro | Onde | Descrição |
 |---|---|---|
@@ -511,6 +524,7 @@ Forecast da campanha e da semana atual (modelo do `forecast_automatico_crm.pdf`)
 | Parâmetro | Onde | Valores | Descrição |
 |---|---|---|---|
 | `segment` | query | `b2b` \| `b2g` | Só as vendas e a meta do setor (sem diferença de maiúscula). Outro valor ou vazio = todos. **b2b/b2g sempre recebem o próprio setor**, o parâmetro é ignorado. |
+| `month` | query | `AAAA-MM` | Forecast do **mês** em vez da campanha (outro formato → `400`). Veja "Forecast do mês" abaixo. |
 
 **Regras:**
 - Campanha de **03/11 a 01/12/2026**. **Dias produtivos:** segunda a sábado, sem feriados (20/11 cai na campanha). Venda em domingo ou feriado conta no dia produtivo anterior.
@@ -525,6 +539,8 @@ Forecast da campanha e da semana atual (modelo do `forecast_automatico_crm.pdf`)
 - **Meta**: a do setor (`BLACK_FRIDAY_GOAL_B2B`/`_B2G`); sem ela, a total (`goalIsTotal: true`).
 - **Semana**: segunda a sábado da semana atual (no máximo até 01/12), com os cenários em `week` (o formato de `week` não mudou).
 - **Meta semanal** (`weekGoal`, campo à parte para `week` continuar igual): automática. Pega o que faltava da meta **antes da segunda-feira** (vendas da própria semana não mexem nela) ÷ dias produtivos da segunda até 01/12 × dias produtivos da semana. Ex.: meta 200 mil, vendido 10 mil até domingo, 19 dias produtivos até o fim e 6 na semana → 190.000 ÷ 19 × 6 = 60 mil. Traz `goal`, `sold` (vendido na semana), `percent`, `remaining`, `productiveDays` (da semana) e `requiredPace` (o que falta ÷ dias produtivos depois de hoje na semana; `null` sem dias). `null` antes da campanha, depois dela ou sem meta. Com a meta já batida, `goal` é 0 e `percent` é `null`.
+
+**Forecast do mês (`?month=AAAA-MM`):** o mesmo cálculo e os mesmos modelos, mas o período são as semanas que começam no mês (como nas metas mensais; ex.: novembro/2026 = 02/11 a 06/12), o vendido conta só as vendas desse período e a meta é a **Meta do cadastro de metas** (do setor, ou a soma dos setores com "Todos"); sem meta cadastrada, `goal` é `0`. A resposta traz `period: { type: "month", month, start, end }` e `monthTiers` (`{ goal, super, black }` do mês, ou `null`); `campaign.start`/`campaign.end` passam a ser o início e o fim do mês. Sem `month`: `period: { type: "campaign" }`. Como a importação só traz as vendas da campanha, os outros meses aparecem sem vendas.
 
 **Resposta** (valores em reais; `paceCoverage` e `probability` em %, com 2 casas):
 

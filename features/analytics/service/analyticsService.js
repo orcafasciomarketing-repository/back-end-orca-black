@@ -183,7 +183,11 @@ exports.getSdrRanking = async (period, segment = null) => {
 // Forecast da campanha e da semana (cenários pessimista, realista e otimista).
 // segment: "b2b"/"b2g" usa só as vendas e a meta do setor; null = todos.
 // Sem meta do setor configurada, usa a meta total (goalIsTotal avisa)
-exports.getForecast = async (segment, now = new Date()) => {
+// month (AAAA-MM): forecast do mês da meta (as semanas que começam no mês), só com as vendas do mês e
+// contra a Meta do cadastro de metas (do setor ou a soma; 0 sem meta cadastrada)
+exports.getForecast = async (segment, now = new Date(), month = null) => {
+  if (month) return getMonthForecast(segment, now, month);
+
   const sales = await SalesService.findActiveByPeriod("all");
   const segmentSales = segment ? sales.filter((sale) => sale.segment === segment) : sales;
 
@@ -192,25 +196,59 @@ exports.getForecast = async (segment, now = new Date()) => {
 
   // Setor escolhido: o modelo dele. "Todos": a soma do forecast de cada setor, cada um com o seu modelo
   // (venda sem setor entra no B2B)
+  return {
+    segment,
+    goalIsTotal: segment ? !(segmentGoal > 0) : true,
+    period: { type: "campaign" },
+    ...forecastBySegment({ sales, segment, goal, now }),
+  };
+};
+
+// Setor escolhido: o modelo dele. Todos: a soma do forecast de cada setor (venda sem setor entra no B2B)
+function forecastBySegment({ sales, segment, goal, now, range = {} }) {
+  const segmentKey = (sale) => (sale.segment === "b2g" ? "b2g" : "b2b");
   if (segment) {
-    return {
-      segment,
-      goalIsTotal: !(segmentGoal > 0),
-      ...buildForecast({ sales: segmentSales, goal, now, model: forecastModelOf(segment) }),
-    };
+    return buildForecast({
+      sales: sales.filter((sale) => sale.segment === segment),
+      goal,
+      now,
+      model: forecastModelOf(segment),
+      ...range,
+    });
   }
 
-  const salesOf = (key) => sales.filter((sale) => (sale.segment === "b2g" ? "b2g" : "b2b") === key);
   const parts = ["b2b", "b2g"].map((key) =>
-    buildForecast({ sales: salesOf(key), goal: 0, now, model: forecastModelOf(key) }),
+    buildForecast({ sales: sales.filter((sale) => segmentKey(sale) === key), goal: 0, now, model: forecastModelOf(key), ...range }),
   );
+  return combineForecasts({ total: buildForecast({ sales, goal, now, ...range }), parts, goal });
+}
+
+async function getMonthForecast(segment, now, month) {
+  // Carregado aqui dentro: o serviço de metas depende (via prêmios) deste serviço
+  const MonthlyGoalService = require("../../goals/service/monthlyGoalService");
+  const { monthWeeks, dayKeyOf: goalDayKeyOf } = require("../../goals/service/goalCalculator");
+
+  const weeks = monthWeeks(month);
+  const start = weeks[0].start;
+  const end = weeks[weeks.length - 1].end;
+  const [allSales, tiers] = await Promise.all([
+    SalesService.findActiveByPeriod("all"),
+    MonthlyGoalService.getMonthTiers(month, segment),
+  ]);
+  const sales = allSales.filter((sale) => {
+    const day = goalDayKeyOf(sale.realizedAt);
+    return day >= start && day <= end;
+  });
+  const goal = tiers?.goal ?? 0;
 
   return {
     segment,
-    goalIsTotal: true,
-    ...combineForecasts({ total: buildForecast({ sales, goal, now }), parts, goal }),
+    goalIsTotal: false,
+    period: { type: "month", month, start, end },
+    monthTiers: tiers,
+    ...forecastBySegment({ sales, segment, goal, now, range: { start, end } }),
   };
-};
+}
 
 exports.getPointsHistory = async (segment = null, now = new Date()) => {
   const [teams, vendors, sdrs, allSales] = await Promise.all([

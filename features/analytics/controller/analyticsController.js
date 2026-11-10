@@ -1,5 +1,6 @@
 const AnalyticsService = require("../service/analyticsService");
 const { getRoleSegment } = require("../../../config/roles");
+const { ValidationError } = require("../../../shared/errors");
 
 const toSegment = (value) => {
   const segment = String(value ?? "").toLowerCase();
@@ -84,7 +85,11 @@ exports.getForecast = async (req, res, next) => {
   const requested = String(req.query.segment ?? "").toLowerCase();
   const segment = getRoleSegment(req.user.role) ?? (["b2b", "b2g"].includes(requested) ? requested : null);
 
-  const data = await AnalyticsService.getForecast(segment);
+  // ?month=AAAA-MM: forecast do mês (meta do cadastro de metas). Sem ele, a campanha
+  const month = req.query.month === undefined || req.query.month === "" ? null : String(req.query.month);
+  if (month !== null && !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw ValidationError("Mês inválido (use AAAA-MM)");
+
+  const data = await AnalyticsService.getForecast(segment, new Date(), month);
   return res.status(200).json({
     success: true,
     data,
