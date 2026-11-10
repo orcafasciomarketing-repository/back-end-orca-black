@@ -801,7 +801,7 @@ Para a tela de cadastro.
     "b2b": {
       "config": { "month": "2026-11", "farmGoal": 48000, "salesGoal": 72000, "superPercent": 125, "farmBlack": 80000, "salesBlack": 120000,
         "levels": [{ "key": "junior", "name": "Júnior", "weight": 1 }],
-        "people": [{ "vendorId": "...", "type": "sales", "level": "junior", "goal": 9000, "weeks": [1800, 1800, 1800, 1800, 1800] }],
+        "people": [{ "vendorId": "...", "type": "sales", "level": "junior", "goal": 9000, "superGoal": 10800, "blackGoal": null, "weeks": [1800, 1800, 1800, 1800, 1800] }],
         "updatedBy": "admin@...", "updatedAt": "..." },
       "previous": null,
       "vendors": [{ "vendorId": "...", "name": "...", "job": "B2B Venda", "imageUrl": "...", "teamId": "...", "teamName": "...", "type": "sales" }]
@@ -818,12 +818,14 @@ Para a tela de cadastro.
 
 ### `PUT /goals/:month/:segment`
 
-Body (`strictObject`): `{ farmGoal, salesGoal, superPercent, farmBlack?, levels: [{ key, name, weight }], people: [{ vendorId, level, goal, weeks: [...] }] }` (valores em R$; `farmBlack` só é gravado no mês da campanha, junto com `salesBlack` = Black do setor − `farmBlack`). Substitui o mês inteiro daquele setor (os outros meses não mudam). Só salva quando tudo fecha (senão `400` com a mensagem):
+Body (`strictObject`): `{ farmGoal, salesGoal, superPercent, farmBlack?, levels: [{ key, name, weight }], people: [{ vendorId, level, goal, superGoal?, blackGoal?, weeks: [...] }] }` (valores em R$; `superGoal`/`blackGoal` são a Super e a Black da pessoa, e sem eles vale a parte proporcional à Meta dela; `blackGoal` só é gravado no mês da campanha; `farmBlack` só é gravado no mês da campanha, junto com `salesBlack` = Black do setor − `farmBlack`). Substitui o mês inteiro daquele setor (os outros meses não mudam). Só salva quando tudo fecha (senão `400` com a mensagem):
 
 - `farmGoal + salesGoal` > 0; `superPercent` > 100; no mês da campanha, a Black do setor configurada no `.env`, `farmBlack` ≤ a Black do setor e, em cada parte com Meta, a Black > a Super dela (ex.: `"Vendas: a Meta black precisa ser maior que a Super meta (R$ 1.500,00)"`); pelo menos um nível, com peso > 0 e chave única;
 - cada vendedor existe, é do setor, aparece uma vez e tem um nível válido;
 - uma meta por semana do mês, e a soma das semanas = a meta mensal do vendedor (no centavo);
-- a soma das metas dos Farmers = `farmGoal` e a dos outros = `salesGoal` (no centavo). Ex.: `"Renovação: distribuído R$ 40.000,00 de R$ 48.000,00"`.
+- a soma das metas dos Farmers = `farmGoal` e a dos outros = `salesGoal` (no centavo). Ex.: `"Renovação: distribuído R$ 40.000,00 de R$ 48.000,00"`;
+- a Super de cada pessoa ≥ a Meta dela e, no mês da campanha, a Black ≥ a Super (ex.: `"A Super meta de Fulano não pode ser menor que a Meta do mês (R$ 400,00)"`);
+- a soma das Supers (e, no mês da campanha, das Blacks) de cada parte = a Super (Black) da parte, no centavo. Ex.: `"Super meta Vendas: distribuído R$ 1.600,00 de R$ 1.500,00"`.
 
 Responde o `config` salvo, com `updatedBy` = e-mail de quem salvou.
 
@@ -853,7 +855,7 @@ Progresso do mês (vendas `ativa`, pelo `realizedAt` no horário de São Paulo, 
 
 - `available`: as faixas do mês (`["goal", "super"]` fora do mês da campanha; com `"black"` nele). `current`: a primeira ainda não batida; bateu todas, fica na última e o que passou dela vai em `excess`. `percent` é do `target` (a faixa atual).
 - `parts`: progresso de Farmer e de Venda, cada um com as próprias faixas. `goal` do setor = soma das partes.
-- `tiers` da pessoa: a Meta é a dela; a Super e a Black da parte dela são divididas entre as pessoas da parte na proporção da Meta de cada uma. Nas semanas, na proporção da Meta semanal.
+- `tiers` da pessoa: a Meta, a Super e a Black são as que o gestor salvou (`superGoal`/`blackGoal`). Mês salvo antes desses campos: a Super e a Black da parte são divididas na proporção da Meta de cada um. Se a Black do setor no `.env` mudar depois do cadastro, a Black de cada pessoa acompanha na mesma proporção. Nas semanas, na proporção da Meta semanal.
 - `pace` é em relação à Meta (faixa normal): `expected` = quanto já deveria ter até hoje; `neededPerDay` = quanto falta ÷ dias que faltam; `projection` = ritmo atual até o fim.
 - `people` vem do mais perto para o mais longe da Meta; `teams` = soma das pessoas de cada time; `cumulative` = acumulado por dia (`days`).
 - Mês sem meta: listas vazias e `summary` zerado.

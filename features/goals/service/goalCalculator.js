@@ -110,16 +110,19 @@ const shareLike = (totalCents, keys, weightsCents) => {
 };
 
 // Faixas de cada pessoa: a Meta é a dela; a Super e a Black da parte dela (renovação ou vendas) são
-// divididas entre as pessoas da parte na proporção da Meta de cada uma
+// divididas entre as pessoas da parte na proporção do valor salvo de cada uma (superGoal/blackGoal) ou,
+// sem valor salvo, na proporção da Meta. Com os valores salvos, cada pessoa fica com exatamente o que foi cadastrado
 const peopleTiers = (people, byType) => {
   const result = new Map(people.map((person) => [String(person.vendorId), { goal: fromCents(toCents(person.goal)), super: 0, black: 0 }]));
   for (const tier of ["super", "black"]) {
     for (const type of TYPES) {
       const members = people.filter((person) => person.type === type);
+      const field = `${tier}Goal`;
+      const saved = members.length > 0 && members.every((person) => person[field] != null);
       const shares = shareLike(
         toCents(byType[type][tier]),
         members.map((person) => String(person.vendorId)),
-        members.map((person) => toCents(person.goal)),
+        members.map((person) => toCents(saved ? person[field] : person.goal)),
       );
       shares.forEach((cents, key) => {
         result.get(key)[tier] = fromCents(cents);

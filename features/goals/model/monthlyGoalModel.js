@@ -20,6 +20,9 @@ const personSchema = new Schema(
     type: { type: String, required: true, enum: ["farm", "sales"] },
     level: { type: String, required: true },
     goal: { type: Number, required: true, min: 0 },
+    // Super meta e Meta black da pessoa, como o gestor deixou (a Black só no mês da campanha)
+    superGoal: { type: Number, default: null },
+    blackGoal: { type: Number, default: null },
     // Uma meta por semana do mês, na ordem das semanas
     weeks: [{ type: Number, min: 0 }],
   },

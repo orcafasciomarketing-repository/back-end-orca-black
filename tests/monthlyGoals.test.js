@@ -336,6 +336,67 @@ describe("Metas mensais (/goals)", () => {
       assert.deepEqual(a1.weeks[0].tiers, { goal: 240, super: 300, black: 600 });
       assert.deepEqual(a1.month.available, ["goal", "super", "black"]);
     });
+    it("Super e Black de cada vendedor podem ser editadas; cada parte precisa fechar e a ordem das faixas vale por pessoa", async () => {
+      await Vendors.updateOne({ _id: seed.vendorB1._id }, { job: "B2B Venda" });
+      const put = (body) => request("PUT", "/goals/2026-11/b2b", tokens.admin, body);
+      const salesPeople = (a1, b1) => [
+        { vendorId: String(seed.vendorA1._id), level: "jr", goal: 800, weeks: [160, 160, 160, 160, 160], ...a1 },
+        { vendorId: String(seed.vendorB1._id), level: "jr", goal: 400, weeks: [80, 80, 80, 80, 80], ...b1 },
+        novemberB2b().people[1],
+      ];
+      const body = (a1, b1) => novemberB2b({ people: salesPeople(a1, b1) });
+
+      assert.match(
+        (await put(body({ superGoal: 1200 }, { superGoal: 300 }))).body.error,
+        /Super meta de Vendor B1 não pode ser menor que a Meta do mês \(R\$\s400,00\)/,
+      );
+      assert.match(
+        (await put(body({ superGoal: 1100 }, { superGoal: 500 }))).body.error,
+        /Super meta Vendas: distribuído R\$\s1\.600,00 de R\$\s1\.500,00/,
+      );
+      assert.match(
+        (await put(body({ superGoal: 1000, blackGoal: 900 }, { superGoal: 500, blackGoal: 2100 }))).body.error,
+        /Meta black de Vendor A1 não pode ser menor que a Super meta/,
+      );
+      assert.match(
+        (await put(body({ superGoal: 1000, blackGoal: 2000 }, { superGoal: 500, blackGoal: 500 }))).body.error,
+        /Meta black Vendas: distribuído R\$\s2\.500,00 de R\$\s3\.000,00/,
+      );
+
+      const saved = await put(body({ superGoal: 1000, blackGoal: 2000 }, { superGoal: 500, blackGoal: 1000 }));
+      assert.equal(saved.status, 200);
+      assert.deepEqual(
+        saved.body.data.people.map(({ superGoal, blackGoal }) => [superGoal, blackGoal]),
+        [
+          [1000, 2000],
+          [500, 1000],
+          [2250, 3000],
+        ],
+      );
+
+      const { data } = (await request("GET", "/goals/2026-11/progress", tokens.admin)).body;
+      const tiersOf = (name) => data.people.find((person) => person.name === name).month.tiers;
+      assert.deepEqual(tiersOf("Vendor A1"), { goal: 800, super: 1000, black: 2000 });
+      assert.deepEqual(tiersOf("Vendor B1"), { goal: 400, super: 500, black: 1000 });
+      assert.deepEqual(data.people.find((person) => person.name === "Vendor A1").weeks[0].tiers, {
+        goal: 160,
+        super: 200,
+        black: 400,
+      });
+    });
+
+    it("fora do mês da campanha a Super de cada vendedor é gravada e a Black não", async () => {
+      const people = validB2b().people.map((person) => ({ ...person, blackGoal: 99999 }));
+      assert.equal((await request("PUT", `/goals/${MONTH}/b2b`, tokens.admin, { ...validB2b(), people })).status, 200);
+      const saved = await MonthlyGoal.findOne({ month: MONTH });
+      assert.deepEqual(
+        saved.people.map(({ superGoal, blackGoal }) => [superGoal, blackGoal]),
+        [
+          [4800, null],
+          [7200, null],
+        ],
+      );
+    });
   });
 
   describe("progresso do mês", () => {

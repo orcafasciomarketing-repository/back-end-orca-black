@@ -46,6 +46,7 @@ const withSectorBlack = (config) => {
   return { ...config, farmBlack: fromCents(farm), salesBlack: fromCents(toCents(sector) - farm) };
 };
 const TYPE_LABELS = { farm: "Renovação", sales: "Vendas" };
+const TIER_LABELS = { super: "Super meta", black: "Meta black" };
 
 // Farmer conta só renovações; os outros cargos (Venda, Sales, Executivo...) contam vendas novas
 const typeOfJob = (job) => (/farm/i.test(String(job ?? "")) ? "farm" : "sales");
@@ -79,6 +80,8 @@ const toConfig = (config) => ({
     type: person.type,
     level: person.level,
     goal: person.goal,
+    superGoal: person.superGoal ?? null,
+    blackGoal: person.blackGoal ?? null,
     weeks: [...person.weeks],
   })),
   updatedBy: config.updatedBy ?? null,
@@ -152,9 +155,12 @@ exports.saveMonth = async (month, segment, data, updatedBy) => {
     totals[type] += toCents(person.goal);
     return {
       vendorId: person.vendorId,
+      name: vendor.vendorName,
       type,
       level: person.level,
       goal: fromCents(toCents(person.goal)),
+      superGoal: person.superGoal ?? null,
+      blackGoal: person.blackGoal ?? null,
       weeks: person.weeks.map((value) => fromCents(toCents(value))),
     };
   });
@@ -188,6 +194,49 @@ exports.saveMonth = async (month, segment, data, updatedBy) => {
     }
   }
 
+  // Super e Black de cada pessoa: a que o gestor mandou ou, sem valor, a parte proporcional à Meta.
+  // A soma de cada parte precisa dar a Super/Black da parte, e a pessoa não pode ter Super menor que a Meta
+  // nem Black menor que a Super
+  const byType = typeTiers(isBlackMonth ? withSectorBlack({ ...data, segment }) : data, isBlackMonth);
+  const tiers = ["super", ...(isBlackMonth ? ["black"] : [])];
+  const fallback = peopleTiers(
+    people.map((person) => ({ ...person, superGoal: null, blackGoal: null })),
+    byType,
+  );
+  const tiersOf = new Map(
+    people.map((person) => {
+      const base = fallback.get(person.vendorId);
+      return [
+        person.vendorId,
+        {
+          super: fromCents(toCents(person.superGoal ?? base.super)),
+          black: isBlackMonth ? fromCents(toCents(person.blackGoal ?? base.black)) : null,
+        },
+      ];
+    }),
+  );
+  for (const person of people) {
+    const own = tiersOf.get(person.vendorId);
+    if (toCents(own.super) < toCents(person.goal)) {
+      throw ValidationError(`A Super meta de ${person.name} não pode ser menor que a Meta do mês (${money(person.goal)})`);
+    }
+    if (isBlackMonth && toCents(own.black) < toCents(own.super)) {
+      throw ValidationError(`A Meta black de ${person.name} não pode ser menor que a Super meta (${money(own.super)})`);
+    }
+  }
+  for (const tier of tiers) {
+    for (const type of ["farm", "sales"]) {
+      const sum = people
+        .filter((person) => person.type === type)
+        .reduce((total, person) => total + toCents(tiersOf.get(person.vendorId)[tier]), 0);
+      if (sum !== toCents(byType[type][tier])) {
+        throw ValidationError(
+          `${TIER_LABELS[tier]} ${TYPE_LABELS[type]}: distribuído ${money(fromCents(sum))} de ${money(byType[type][tier])}`,
+        );
+      }
+    }
+  }
+
   const saved = await MonthlyGoalRepository.upsert(month, segment, {
     farmGoal: fromCents(toCents(data.farmGoal)),
     salesGoal: fromCents(toCents(data.salesGoal)),
@@ -195,7 +244,11 @@ exports.saveMonth = async (month, segment, data, updatedBy) => {
     farmBlack: isBlackMonth ? withSectorBlack({ ...data, segment }).farmBlack : null,
     salesBlack: isBlackMonth ? withSectorBlack({ ...data, segment }).salesBlack : null,
     levels: data.levels.map(({ key, name, weight }) => ({ key: key.trim(), name: name.trim(), weight })),
-    people,
+    people: people.map(({ name, ...person }) => ({
+      ...person,
+      superGoal: tiersOf.get(person.vendorId).super,
+      blackGoal: tiersOf.get(person.vendorId).black,
+    })),
     updatedBy,
   });
   return toConfig(saved);

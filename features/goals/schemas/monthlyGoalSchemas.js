@@ -28,6 +28,8 @@ const SaveMonthlyGoalSchema = zod
           vendorId: objectId,
           level: zod.string().trim().min(1, "Escolha o nível de cada vendedor"),
           goal: money("Meta do vendedor inválida"),
+          superGoal: money("Super meta do vendedor inválida").nullable().optional(),
+          blackGoal: money("Meta black do vendedor inválida").nullable().optional(),
           weeks: zod.array(money("Meta da semana inválida")).max(6, "Semanas demais"),
         }),
       )
