@@ -2,10 +2,9 @@ const zod = require("zod");
 
 const objectId = zod.string().regex(/^[0-9a-f]{24}$/i, "Vendedor inválido");
 const money = (message) => zod.number({ message }).min(0, message).max(1e10, "Valor alto demais");
-const percent = (message) => zod.number({ message }).min(0, message).max(100, message);
 
-// Modelo de níveis: cada nível é de um tipo (Farmer ou Venda), com Meta e Super em R$ e a divisão da meta por
-// origem (%). A pessoa manda a Meta e a Super finais (as do nível ou ajustadas à mão)
+// Modelo de níveis: cada nível é de um tipo (Farmer ou Venda), com Meta e Super em R$. A pessoa manda a Meta e a
+// Super finais (as do nível ou ajustadas à mão). No mês com Meta black, a Black de Farmer e a de Venda são digitadas
 const SaveMonthlyGoalSchema = zod.strictObject({
   levels: zod
     .array(
@@ -15,9 +14,6 @@ const SaveMonthlyGoalSchema = zod.strictObject({
         type: zod.enum(["farm", "sales"], { message: "Tipo do nível inválido" }),
         goal: money("Meta do nível inválida"),
         superGoal: money("Super meta do nível inválida"),
-        anticipation: percent("Percentual de antecipação inválido").default(0),
-        upsell: percent("Percentual de up-sell inválido").default(0),
-        churn: percent("Percentual de churn inválido").default(0),
       }),
     )
     .min(1, "Cadastre pelo menos um nível")
@@ -35,6 +31,7 @@ const SaveMonthlyGoalSchema = zod.strictObject({
     })
     .default({ farm: null, sales: null }),
   farmBlack: money("Meta black de renovação inválida").nullable().optional(),
+  salesBlack: money("Meta black de vendas inválida").nullable().optional(),
   people: zod
     .array(
       zod.strictObject({

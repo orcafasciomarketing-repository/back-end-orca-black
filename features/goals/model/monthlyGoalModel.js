@@ -1,21 +1,18 @@
 const { Schema, model } = require("mongoose");
 
 // Meta de um setor (b2b ou b2g) em um mês (AAAA-MM), com tudo o que o gestor cadastra: os níveis de Farmer e
-// de Venda (Meta e Super em R$, % de antecipação, up-sell e churn), o ticket médio de cada tipo, quanto da Meta
-// black do setor é de renovação (só no mês da campanha com Meta black) e a meta de cada vendedor.
+// de Venda (Meta e Super em R$), o ticket médio e a conversão de cada tipo, a Meta black de Farmer e a de Venda
+// (só no mês da campanha com Meta black) e a meta de cada vendedor.
 // Cada mês é um documento, então mudar um mês não mexe no histórico dos outros.
 // Meses salvos no modelo antigo têm níveis com peso, superPercent e metas por semana (weeks); continuam valendo
 const levelSchema = new Schema(
   {
     key: { type: String, required: true },
     name: { type: String, required: true },
-    // Modelo de níveis: o tipo do nível (cada tipo tem os seus), a Meta e a Super em R$ e a divisão da meta
+    // Modelo de níveis: o tipo do nível (cada tipo tem os seus) e a Meta e a Super em R$
     type: { type: String, enum: ["farm", "sales"] },
     goal: { type: Number, min: 0 },
     superGoal: { type: Number, min: 0 },
-    anticipation: { type: Number, min: 0, max: 100 },
-    upsell: { type: Number, min: 0, max: 100 },
-    churn: { type: Number, min: 0, max: 100 },
     // Modelo antigo: peso de senioridade
     weight: { type: Number, min: 0 },
   },
@@ -60,8 +57,12 @@ const monthlyGoalSchema = new Schema(
     },
     // Só no mês da campanha; nos outros, null
     farmBlack: { type: Number, default: null },
-    // Black do setor (.env) − Black de Farmer, gravada para registro; o progresso recalcula com o .env atual
+    // Black de Venda: digitada no cadastro (blackTyped) ou, em mês salvo antes, a meta do setor na campanha −
+    // Black de Farmer (só registro; o progresso recalcula com a meta atual da campanha)
     salesBlack: { type: Number, default: null },
+    // true: a Black de Farmer e a de Venda foram digitadas no cadastro. Mês salvo antes (false): só a de Farmer
+    // foi digitada e a de Venda é a meta do setor na campanha − Farmer
+    blackTyped: { type: Boolean, default: false },
     levels: [levelSchema],
     people: [personSchema],
     // E-mail de quem salvou por último

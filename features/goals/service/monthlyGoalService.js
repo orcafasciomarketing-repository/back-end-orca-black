@@ -44,8 +44,10 @@ const blackInfo = (month, campaigns) => {
   };
 };
 
-// Black de Venda = Black do setor (campanha) − Black de Farmer, sempre com o valor atual da campanha
+// Meta black de cada parte: a digitada no cadastro (Farmer e Venda). Mês salvo antes disso (só a de Farmer
+// digitada): Venda = meta do setor na campanha − Farmer
 const withSectorBlack = (config, black) => {
+  if (config.farmBlack != null && config.salesBlack != null && config.blackTyped) return config;
   const sector = black.sectorGoals[config.segment] ?? 0;
   const farm = Math.min(toCents(config.farmBlack ?? 0), toCents(sector));
   return { ...config, farmBlack: fromCents(farm), salesBlack: fromCents(toCents(sector) - farm) };
@@ -84,6 +86,7 @@ const toConfig = (config) => ({
   superPercent: config.superPercent ?? null,
   farmBlack: config.farmBlack ?? null,
   salesBlack: config.salesBlack ?? null,
+  blackTyped: Boolean(config.blackTyped),
   tickets: { farm: config.tickets?.farm ?? null, sales: config.tickets?.sales ?? null },
   conversion: { farm: config.conversion?.farm ?? null, sales: config.conversion?.sales ?? null },
   levels: config.levels.map((level) => ({
@@ -92,9 +95,6 @@ const toConfig = (config) => ({
     type: level.type ?? null,
     goal: level.goal ?? null,
     superGoal: level.superGoal ?? null,
-    anticipation: level.anticipation ?? 0,
-    upsell: level.upsell ?? 0,
-    churn: level.churn ?? 0,
     weight: level.weight ?? null,
   })),
   people: config.people.map((person) => ({
@@ -158,9 +158,6 @@ exports.saveMonth = async (month, segment, data, updatedBy) => {
     if (toCents(level.superGoal) < toCents(level.goal)) {
       throw ValidationError(`${label}: a Super meta não pode ser menor que a Meta (${money(level.goal)})`);
     }
-    if (level.anticipation + level.upsell + level.churn > 100) {
-      throw ValidationError(`${label}: antecipação, up-sell e churn passam de 100% da meta`);
-    }
   }
 
   const seen = new Set();
@@ -201,31 +198,30 @@ exports.saveMonth = async (month, segment, data, updatedBy) => {
     farmSuper: fromCents(totals.farm.super),
     salesSuper: fromCents(totals.sales.super),
     superPercent: null,
-    farmBlack: data.farmBlack ?? 0,
+    farmBlack: data.farmBlack ?? null,
+    salesBlack: data.salesBlack ?? null,
   };
 
   const black = blackInfo(month, await CampaignService.findAll());
   const isBlackMonth = black.active;
-  const sectorBlack = black.sectorGoals[segment];
-  const withBlack = isBlackMonth ? withSectorBlack(config, black) : config;
-  const byType = typeTiers(withBlack, isBlackMonth);
+  const byType = typeTiers(config, isBlackMonth);
   const blackOf = new Map(people.map((person) => [person.vendorId, null]));
 
+  // Mês com Meta black: o gestor digita a Black de Farmer e a de Venda (cada uma ≥ a Super da parte; pode ser igual)
   if (isBlackMonth) {
-    if (sectorBlack <= 0) {
-      throw ValidationError(`A Meta ${segment.toUpperCase()} da campanha ${black.campaign.name} não está cadastrada (Campanhas)`);
-    }
-    if (toCents(data.farmBlack ?? 0) > toCents(sectorBlack)) {
-      throw ValidationError(`A Meta black Farmer passa da Meta black do setor (${money(sectorBlack)})`);
-    }
     for (const type of ["farm", "sales"]) {
       const tiers = byType[type];
-      if (tiers.goal > 0 && !(tiers.black > tiers.super)) {
-        throw ValidationError(`${TYPE_LABELS[type]}: a Meta black precisa ser maior que a Super meta (${money(tiers.super)})`);
+      if (tiers.goal > 0 && config[`${type}Black`] == null) {
+        throw ValidationError(`Informe a Meta black de ${TYPE_LABELS[type]}`);
+      }
+      if (tiers.goal > 0 && toCents(tiers.black) < toCents(tiers.super)) {
+        throw ValidationError(
+          `${TYPE_LABELS[type]}: a Meta black não pode ser menor que a Super meta (${money(tiers.super)})`,
+        );
       }
     }
 
-    // Black de cada pessoa: a que veio ou, sem valor, a parte proporcional à Meta
+    // Black de cada pessoa: a que veio ou, sem valor, a parte proporcional à Super dela
     const fallback = peopleTiers(
       people.map((person) => ({ ...person, blackGoal: null })),
       byType,
@@ -255,8 +251,9 @@ exports.saveMonth = async (month, segment, data, updatedBy) => {
     farmSuper: config.farmSuper,
     salesSuper: config.salesSuper,
     superPercent: null,
-    farmBlack: isBlackMonth ? withBlack.farmBlack : null,
-    salesBlack: isBlackMonth ? withBlack.salesBlack : null,
+    farmBlack: isBlackMonth ? fromCents(toCents(config.farmBlack ?? 0)) : null,
+    salesBlack: isBlackMonth ? fromCents(toCents(config.salesBlack ?? 0)) : null,
+    blackTyped: isBlackMonth,
     tickets: { farm: data.tickets?.farm ?? null, sales: data.tickets?.sales ?? null },
     conversion: { farm: data.conversion?.farm ?? null, sales: data.conversion?.sales ?? null },
     levels: data.levels.map((level) => ({
@@ -265,9 +262,6 @@ exports.saveMonth = async (month, segment, data, updatedBy) => {
       type: level.type,
       goal: fromCents(toCents(level.goal)),
       superGoal: fromCents(toCents(level.superGoal)),
-      anticipation: level.anticipation,
-      upsell: level.upsell,
-      churn: level.churn,
     })),
     people: people.map(({ name, ...person }) => ({ ...person, blackGoal: blackOf.get(person.vendorId), weeks: [] })),
     updatedBy,
@@ -376,18 +370,6 @@ exports.getProgress = async (month, now = new Date()) => {
         levelName: level?.name ?? person.level,
         ticket,
         conversion,
-        // Divisão da meta do mês por origem (% do nível): antecipação, up-sell e churn
-        origins: level?.type
-          ? Object.fromEntries(
-              ["anticipation", "upsell", "churn"].map((key) => [
-                key,
-                {
-                  percent: level[key] ?? 0,
-                  value: fromCents(Math.round((toCents(personTiers.goal) * (level[key] ?? 0)) / 100)),
-                },
-              ]),
-            )
-          : null,
         month: progressOf(realized, personTiers, first, last, ticket, conversion),
         forecast: forecastOf(daily, personTiers, config.segment),
         weeks: weeks.map((week, index) => ({
