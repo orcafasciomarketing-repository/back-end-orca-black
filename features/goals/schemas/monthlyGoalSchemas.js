@@ -5,7 +5,7 @@ const { VISIBILITY_KEYS } = require("../service/goalVisibility");
 const objectId = zod.string().regex(/^[0-9a-f]{24}$/i, "Vendedor inválido");
 const money = (message) => zod.number({ message }).min(0, message).max(1e10, "Valor alto demais");
 
-// Modelo de níveis: cada nível é de um tipo (Farmer ou Venda), com Meta e Super em R$. A pessoa manda a Meta e a
+// Modelo de níveis: cada nível é de um tipo (Farmer ou Venda), com Meta e Super em R$ (e, no mês com Meta black, a Black). A pessoa manda a Meta e a
 // Super finais (as do nível ou ajustadas à mão). No mês com Meta black, a Black de Farmer e a de Venda são digitadas
 const SaveMonthlyGoalSchema = zod.strictObject({
   levels: zod
@@ -16,6 +16,7 @@ const SaveMonthlyGoalSchema = zod.strictObject({
         type: zod.enum(["farm", "sales"], { message: "Tipo do nível inválido" }),
         goal: money("Meta do nível inválida"),
         superGoal: money("Super meta do nível inválida"),
+        blackGoal: money("Meta black do nível inválida").nullable().optional(),
       }),
     )
     .min(1, "Cadastre pelo menos um nível")

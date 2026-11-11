@@ -96,6 +96,7 @@ const toConfig = (config) => ({
     type: level.type ?? null,
     goal: level.goal ?? null,
     superGoal: level.superGoal ?? null,
+    blackGoal: level.blackGoal ?? null,
     weight: level.weight ?? null,
   })),
   people: config.people.map((person) => ({
@@ -209,8 +210,16 @@ exports.saveMonth = async (month, segment, data, updatedBy) => {
   const byType = typeTiers(config, isBlackMonth);
   const blackOf = new Map(people.map((person) => [person.vendorId, null]));
 
-  // Mês com Meta black: o gestor digita a Black de Farmer e a de Venda (cada uma ≥ a Super da parte; pode ser igual)
+  // Mês com Meta black: cada nível pode ter a sua Black (≥ a Super do nível); a Black de Farmer e a de Venda vêm
+  // somadas das pessoas pelo front, e aqui só se confere (cada uma ≥ a Super da parte; pode ser igual)
   if (isBlackMonth) {
+    for (const level of data.levels) {
+      if (level.blackGoal != null && toCents(level.blackGoal) < toCents(level.superGoal)) {
+        throw ValidationError(
+          `${TYPE_LABELS[level.type]} · ${level.name.trim()}: a Meta black não pode ser menor que a Super meta (${money(level.superGoal)})`,
+        );
+      }
+    }
     for (const type of ["farm", "sales"]) {
       const tiers = byType[type];
       if (tiers.goal > 0 && config[`${type}Black`] == null) {
@@ -269,6 +278,7 @@ exports.saveMonth = async (month, segment, data, updatedBy) => {
       type: level.type,
       goal: fromCents(toCents(level.goal)),
       superGoal: fromCents(toCents(level.superGoal)),
+      blackGoal: isBlackMonth && level.blackGoal != null ? fromCents(toCents(level.blackGoal)) : null,
     })),
     people: people.map(({ name, ...person }) => ({ ...person, blackGoal: blackOf.get(person.vendorId), weeks: [] })),
     updatedBy,

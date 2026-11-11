@@ -343,7 +343,7 @@ describe("Metas mensais (/goals)", () => {
       assert.equal(config.superPercent, null);
       assert.deepEqual(config.tickets, { farm: 2000, sales: 1000 });
       assert.deepEqual(config.conversion, { farm: null, sales: 30 });
-      assert.deepEqual(config.levels[0], { key: "jr", name: "Júnior", type: "sales", goal: 4000, superGoal: 4800, weight: null });
+      assert.deepEqual(config.levels[0], { key: "jr", name: "Júnior", type: "sales", goal: 4000, superGoal: 4800, blackGoal: null, weight: null });
       assert.deepEqual(config.people[1], { vendorId: String(seed.vendorA2._id), type: "farm", level: "sr", goal: 6000, superGoal: 7200, blackGoal: null, weeks: [] });
       assert.equal(month.segments.b2g.config, null);
 
@@ -412,6 +412,38 @@ describe("Metas mensais (/goals)", () => {
         { vendorId: String(seed.vendorA2._id), level: "jr", goal: 1800, superGoal: 2250 },
       ],
       ...changes,
+    });
+
+    it("Black por nível: guardada só no mês da campanha e nunca menor que a Super do nível", async () => {
+      const withLevelBlack = (sales, farm) =>
+        novemberB2b({
+          levels: [
+            { key: "jr", name: "Júnior", type: "sales", goal: 1200, superGoal: 1500, blackGoal: sales },
+            { key: "jr", name: "Júnior", type: "farm", goal: 1800, superGoal: 2250, blackGoal: farm },
+          ],
+          farmBlack: farm,
+          salesBlack: sales,
+          people: [
+            { vendorId: String(seed.vendorA1._id), level: "jr", goal: 1200, superGoal: 1500, blackGoal: sales },
+            { vendorId: String(seed.vendorA2._id), level: "jr", goal: 1800, superGoal: 2250, blackGoal: farm },
+          ],
+        });
+
+      const low = await request("PUT", "/goals/2026-11/b2b", tokens.admin, withLevelBlack(1400, 3000));
+      assert.equal(low.status, 400);
+      assert.match(low.body.error, /Vendas · Júnior: a Meta black não pode ser menor que a Super meta \(R\$\s1\.500,00\)/);
+
+      const saved = await request("PUT", "/goals/2026-11/b2b", tokens.admin, withLevelBlack(1500, 3000));
+      assert.equal(saved.status, 200);
+      assert.deepEqual(saved.body.data.levels.map((level) => level.blackGoal), [1500, 3000]);
+      assert.deepEqual([saved.body.data.farmBlack, saved.body.data.salesBlack], [3000, 1500]);
+
+      const october = await request("PUT", `/goals/${MONTH}/b2b`, tokens.admin, {
+        ...validB2b(),
+        levels: levels().map((level) => ({ ...level, blackGoal: 100 })),
+      });
+      assert.equal(october.status, 200);
+      assert.deepEqual(october.body.data.levels.map((level) => level.blackGoal), [null, null]);
     });
 
     it("o mês da campanha traz a Meta black de cada setor do .env", async () => {

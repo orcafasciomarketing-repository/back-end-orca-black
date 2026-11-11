@@ -15,6 +15,9 @@ const levelSchema = new Schema(
     type: { type: String, enum: ["farm", "sales"] },
     goal: { type: Number, min: 0 },
     superGoal: { type: Number, min: 0 },
+    // Só no mês com Meta black: a Black de quem é do nível (a de Farmer e a de Venda do setor são a soma das pessoas).
+    // Mês salvo antes disso não tem
+    blackGoal: { type: Number, min: 0, default: null },
     // Modelo antigo: peso de senioridade
     weight: { type: Number, min: 0 },
   },
