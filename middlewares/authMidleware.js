@@ -49,6 +49,8 @@ exports.authMiddleware = async (req, res, next) => {
       role: getUserRole(user),
       vendorId: user.vendorId ? user.vendorId.toString() : null,
       sdrId: user.sdrId ? user.sdrId.toString() : null,
+      // Setor cujas metas o admin gerencia (cadastro e o que os vendedores veem); null = todos
+      manageSegment: user.role === "admin" ? user.manageSegment ?? null : null,
       impersonatedBy,
     };
 

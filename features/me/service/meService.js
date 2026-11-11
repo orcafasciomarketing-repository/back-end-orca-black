@@ -5,6 +5,14 @@ const SalesService = require("../../sale/service/salesService");
 const AnalyticsService = require("../../analytics/service/analyticsService");
 const PrizeService = require("../../prizes/service/prizeService");
 const MonthlyGoalService = require("../../goals/service/monthlyGoalService");
+const MonthlyGoalRepository = require("../../goals/repository/monthlyGoalRepository");
+const { segmentOfJob } = require("../../prizes/service/prizeService");
+const {
+  toVisibility,
+  personForVendor,
+  historyEntryForVendor,
+  usesHistory,
+} = require("../../goals/service/goalVisibility");
 const { buildPrizeBalance } = require("../../prizes/service/prizeCalculator");
 const { PRIZE_POINTS_STEP } = require("../../../config/prizes");
 const { NotFoundError } = require("../../../shared/errors");
@@ -105,8 +113,10 @@ exports.getPrizes = async (user) => {
   };
 };
 
-// Metas do mês do próprio vendedor (a mesma conta da tela "Metas por vendedor" do admin, só com a parte dele):
+// Metas do mês do próprio vendedor (a mesma conta da tela "Painel de metas" do admin, só com a parte dele):
 // as faixas, o realizado, o ritmo, a previsão, cada semana e o histórico dos meses.
+// Só o que o admin liberou para o setor naquele mês (visibility): mês fechado → person null e closed true; widgets
+// escondidos vêm sem os dados deles e as faixas escondidas somem de todos (o histórico usa o que vale em cada mês).
 // Sem meta cadastrada para ele no mês (ou pessoa de passagem), person vem null
 exports.getGoals = async (user, month) => {
   const person = await findPerson(user);
@@ -117,16 +127,35 @@ exports.getGoals = async (user, month) => {
   const myId = String(person.id);
   const mine = (people) => people.filter((item) => person.kind === "vendor" && String(item.vendorId) === myId);
 
+  const found = mine(progress.people)[0] ?? null;
+  const segment = found?.segment ?? segmentOfJob(person.job);
+  const settings = await MonthlyGoalRepository.findVisibilityByMonths(history.months.map((item) => item.month).concat(month));
+  const visibilityOf = (key, itemSegment) =>
+    toVisibility(settings.find((config) => config.month === key && config.segment === itemSegment)?.visibility);
+  const visibility = visibilityOf(month, segment);
+  const closed = Boolean(found) && !visibility.open;
+  const shown = found && !closed ? personForVendor(found, visibility) : null;
+
   return {
     month: progress.month,
     today: progress.today,
     weeks: progress.weeks,
     days: progress.days,
     black: progress.black,
-    person: mine(progress.people)[0] ?? null,
+    visibility,
+    closed,
+    person: shown,
     history: {
       month: history.month,
-      months: history.months.map((item) => ({ month: item.month, start: item.start, end: item.end, people: mine(item.people) })),
+      months:
+        shown && usesHistory(visibility)
+          ? history.months.map((item) => ({
+              month: item.month,
+              start: item.start,
+              end: item.end,
+              people: mine(item.people).map((entry) => historyEntryForVendor(entry, visibilityOf(item.month, entry.segment))),
+            }))
+          : [],
     },
   };
 };

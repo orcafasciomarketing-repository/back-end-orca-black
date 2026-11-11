@@ -1,5 +1,7 @@
 const zod = require("zod");
 
+const { VISIBILITY_KEYS } = require("../service/goalVisibility");
+
 const objectId = zod.string().regex(/^[0-9a-f]{24}$/i, "Vendedor inválido");
 const money = (message) => zod.number({ message }).min(0, message).max(1e10, "Valor alto demais");
 
@@ -45,4 +47,10 @@ const SaveMonthlyGoalSchema = zod.strictObject({
     .max(300, "Vendedores demais"),
 });
 
-module.exports = { SaveMonthlyGoalSchema };
+// O que os vendedores do setor veem do mês: open (mês liberado) e os itens escondidos (widgets e faixas)
+const GoalVisibilitySchema = zod.strictObject({
+  open: zod.boolean({ message: "Diga se o mês fica liberado para os vendedores" }),
+  hidden: zod.array(zod.enum(VISIBILITY_KEYS, { message: "Item escondido inválido" })).max(VISIBILITY_KEYS.length * 2),
+});
+
+module.exports = { SaveMonthlyGoalSchema, GoalVisibilitySchema };

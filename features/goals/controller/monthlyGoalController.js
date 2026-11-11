@@ -40,3 +40,14 @@ exports.deleteMonth = async (req, res, next) => {
   if (!deleted) throw NotFoundError("Meta não encontrada");
   return res.status(200).json({ success: true, message: "Metas excluídas com sucesso" });
 };
+
+exports.listMonths = async (req, res, next) => {
+  const data = await MonthlyGoalService.listMonths();
+  return res.status(200).json({ success: true, data, message: "Metas cadastradas recuperadas com sucesso" });
+};
+
+exports.saveVisibility = async (req, res, next) => {
+  const data = await MonthlyGoalService.saveVisibility(monthOf(req), segmentOf(req), req.data);
+  if (!data) throw NotFoundError("Meta não encontrada");
+  return res.status(200).json({ success: true, data, message: "O que os vendedores veem foi salvo" });
+};

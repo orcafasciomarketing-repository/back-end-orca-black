@@ -1,5 +1,7 @@
 const { Schema, model } = require("mongoose");
 
+const { VISIBILITY_KEYS } = require("../service/goalVisibility");
+
 // Meta de um setor (b2b ou b2g) em um mês (AAAA-MM), com tudo o que o gestor cadastra: os níveis de Farmer e
 // de Venda (Meta e Super em R$), o ticket médio e a conversão de cada tipo, a Meta black de Farmer e a de Venda
 // (só no mês da campanha com Meta black) e a meta de cada vendedor.
@@ -65,6 +67,13 @@ const monthlyGoalSchema = new Schema(
     blackTyped: { type: Boolean, default: false },
     levels: [levelSchema],
     people: [personSchema],
+    // O que os vendedores do setor veem deste mês em "Minhas metas": open false fecha o mês inteiro (ex.: mês futuro
+    // ainda não divulgado) e hidden lista os widgets e as faixas escondidos. Mês novo copia do último cadastrado.
+    // Mês salvo antes (sem o campo): liberado e com tudo à mostra
+    visibility: {
+      open: { type: Boolean },
+      hidden: [{ type: String, enum: VISIBILITY_KEYS }],
+    },
     // E-mail de quem salvou por último
     updatedBy: { type: String },
   },

@@ -51,11 +51,13 @@ Erros passam pelo handler global e retornam `{ "error": "mensagem" }` com o stat
 | POST | `/campaigns` | **Master e admin** | body | `create` → `create` |
 | PUT | `/campaigns/:id` | **Master e admin** | path `id`, body | `update` → `update` |
 | DELETE | `/campaigns/:id` | **Master e admin** | path `id` | `remove` → `remove` |
+| GET | `/goals` | **Master e admin** | — | `listMonths` → `listMonths` |
 | GET | `/goals/:month` | **Master e admin** | path `month` (AAAA-MM) | `getMonth` → `getMonth` |
 | GET | `/goals/:month/progress` | **Master e admin** | path `month` | `getProgress` → `getProgress` |
 | GET | `/goals/:month/history` | **Master e admin** | path `month`, query `months` | `getHistory` → `getHistory` |
-| PUT | `/goals/:month/:segment` | **Master e admin** | path `month`, `segment`, body | `saveMonth` → `saveMonth` |
-| DELETE | `/goals/:month/:segment` | **Master e admin** | path `month`, `segment` | `deleteMonth` → `deleteMonth` |
+| PUT | `/goals/:month/:segment` | **Master e admin do setor** | path `month`, `segment`, body | `saveMonth` → `saveMonth` |
+| PUT | `/goals/:month/:segment/visibility` | **Master e admin do setor** | path `month`, `segment`, body | `saveVisibility` → `saveVisibility` |
+| DELETE | `/goals/:month/:segment` | **Master e admin do setor** | path `month`, `segment` | `deleteMonth` → `deleteMonth` |
 | GET | `/public/*` | Pública (arquivos estáticos) | path do arquivo | — |
 
 **Rotas públicas** são as usadas pelas telas (TVs), que não fazem login. **Rotas privadas** são do admin.
@@ -91,6 +93,7 @@ O middleware busca o usuário no banco a cada requisição: o perfil vem do banc
 
 - **`vendor` e `sdr` (colaboradores):** a conta fica ligada a um vendedor (`vendorId`) ou a uma pessoa de passagem (`sdrId`). Não entram em nenhuma rota do admin (`/sales/admin`, `/sales/get/:vendorId`, `/analytics/forecast`, `/analytics/points-history`, `/analytics/people-points`, `/users`, `/logs`, importação → `403`); só na área `/me`, onde a pessoa vem sempre do token (nunca da URL). Os outros perfis recebem `403` em `/me`. As rotas públicas das TVs continuam abertas para todos, como antes.
 
+- **Setor das metas do admin (`manageSegment`):** o admin continua vendo tudo, mas só cadastra/edita/exclui metas e escolhe o que os vendedores veem no setor gravado (`PUT`/`DELETE` em `/goals/:month/:segment`). Sem o campo, os dois setores. O master sempre gerencia todos.
 - `master` não é gravado no banco: é o usuário com o e-mail da variável `MASTER_EMAIL` (sem diferença de maiúscula). O perfil gravado dele continua `admin`. Login, refresh e `GET /users` devolvem `role: "master"` para ele.
 - **Sem `MASTER_EMAIL` configurado, todo admin vale como master** (como era antes dos perfis), então um deploy antes de criar a variável não tranca ninguém para fora.
 - Usuário sem o campo `role` (criado antes dos perfis) é tratado como `admin`. As rotas públicas (TVs) não mudam com o perfil.
@@ -737,7 +740,7 @@ Ver e cadastrar: `master` e `admin`. Trocar perfil/senha e excluir: só `master`
 
 ### `GET /users`
 
-**Resposta:** `data: [{ _id, email, role, createdAt, updatedAt }]`, ordenado por e-mail. Usuário antigo, sem perfil, vem como `admin`; o do `MASTER_EMAIL`, como `master`.
+**Resposta:** `data: [{ _id, email, role, manageSegment, createdAt, updatedAt }]`, ordenado por e-mail. `manageSegment`: no `admin`, o setor cujas metas ele gerencia (`"b2b"`, `"b2g"` ou `null` = todos); nos outros perfis (e no master), sempre `null`. Usuário antigo, sem perfil, vem como `admin`; o do `MASTER_EMAIL`, como `master`.
 
 ### `POST /users`
 
@@ -751,12 +754,13 @@ Ver e cadastrar: `master` e `admin`. Trocar perfil/senha e excluir: só `master`
 | `role` | string | sim | `admin`, `b2b`, `b2g`, `vendor` ou `sdr` (`master` não existe no cadastro). |
 | `vendorId` | string (id) | com `role: "vendor"` | Vendedor ligado à conta. |
 | `sdrId` | string (id) | com `role: "sdr"` | Pessoa de passagem ligada à conta. |
+| `manageSegment` | `"b2b"`, `"b2g"` ou `null` | não | Só no `admin`: setor das metas que ele gerencia (`null` = todos). Só o master escolhe; admin cadastrando outro admin passa o setor dele mesmo (um admin do B2B não cria um admin com mais acesso). Nos outros perfis é ignorado. |
 
 **Resposta:** `201 data: { _id, email, role }` (+ `vendorId` ou `sdrId` nos colaboradores). E-mail já cadastrado → `409 Cadastro já realizado`. Colaborador sem a pessoa → `400`; pessoa que não existe → `400 Pessoa não encontrada`; pessoa que já tem conta → `409 Essa pessoa já tem uma conta`. Admin cadastrando o e-mail do `MASTER_EMAIL` → `400 Este e-mail é reservado` (senão viraria master).
 
 ### `PATCH /users/:id`
 
-**Body** (`UpdateUserSchema`): `role` e/ou `password` + `passwordConfirmation` (pelo menos um dos dois). Nova senha derruba as sessões abertas da pessoa (refresh tokens revogados).
+**Body** (`UpdateUserSchema`): `role`, `manageSegment` e/ou `password` + `passwordConfirmation` (pelo menos um). `manageSegment` (`"b2b"`, `"b2g"` ou `null` = todos) só vale no perfil `admin` (em outro perfil → `400 "Só o perfil Admin tem setor que gerencia"`); trocar o perfil para outro que não admin tira o setor. Nova senha derruba as sessões abertas da pessoa (refresh tokens revogados).
 
 Ao trocar o `role` para `vendor`/`sdr`, mande também `vendorId`/`sdrId`; trocar para outro perfil tira a ligação com a pessoa.
 
@@ -827,8 +831,9 @@ As metas do mês do próprio vendedor (tela "Minhas metas"). `?month=AAAA-MM` (s
 }
 ```
 
-- `person`: o mesmo objeto de uma pessoa em `progress.people` (faixas, realizado, ritmo, forecast com quanto precisa por dia e a chance de cada faixa, semanas e acumulado por dia). `null` se ele não tem meta no mês (e sempre `null` para pessoa de passagem).
-- `history.months[].people`: só ele (lista vazia se não estava no mês). Nenhum dado de outro vendedor vem na resposta.
+- `person`: o mesmo objeto de uma pessoa em `progress.people` (faixas, realizado, ritmo, forecast com quanto precisa por dia e a chance de cada faixa, semanas e acumulado por dia), **só com o que o admin liberou** para o setor no mês (`PUT /goals/:month/:segment/visibility`): faixa escondida vem zerada e sai de `available`, da previsão e das semanas (faixa atual, o que falta e excedente recalculados); `forecast` escondido → `null`; `breakdown` escondido → sem `salesNeeded`/`leadsNeeded` e `ticket`/`conversion` `null`; `week` e `weeks` escondidos → `weeks: []`. `null` se ele não tem meta no mês (e sempre `null` para pessoa de passagem).
+- `visibility`: `{ open, hidden }` do setor dele no mês, para a tela esconder os widgets. `closed`: `true` quando ele tem meta mas o mês está fechado (aí `person` vem `null`).
+- `history.months[].people`: só ele (lista vazia se não estava no mês), com as faixas de cada mês conforme o que vale naquele mês (mês fechado → `tiers: null`). Com `comparison` e `evolution` escondidos (ou mês fechado), `months: []`. Nenhum dado de outro vendedor vem na resposta.
 - Usa o mesmo cache de 5 segundos do progresso das metas: muitos vendedores abrindo juntos fazem a conta do mês uma vez só.
 
 ---
@@ -891,7 +896,20 @@ Exclui um lançamento errado; o saldo se recalcula. Retirada que não existe →
 
 ## Metas mensais — `/goals`
 
-Metas em R$ por setor, por vendedor e por semana, com três faixas: Meta, Super meta e Meta black (a black só no mês em que começa uma campanha marcada com Meta black, `hasBlackTier` em `/campaigns`). **Modelo de níveis** (planilha do comercial, desde 11/11/2026): cada setor tem uma tabela de níveis para Farmer e outra para Venda, com **Meta e Super em R$**; cada vendedor recebe a Meta e a Super do nível dele (o gestor pode ajustar à mão), e a parte de cada tipo é a soma das pessoas. Há também o ticket médio e a taxa de conversão de leads (%) de cada tipo, para "quantas vendas faltam" e "quantos leads faltam" (planilha de vendas: leads = o que falta ÷ (ticket × conversão), com 30% em Venda). **A Meta black de Farmer e a de Venda são digitadas** (`farmBlack` e `salesBlack`); cada uma pode ser igual à Super da parte, mas não menor (no B2B, a Black de Venda é a própria Super de Venda). Elas não precisam bater com a meta da campanha (a campanha só decide em qual mês existe a Meta black). A Black de cada parte vai para as pessoas na proporção da Super de cada uma (com a Black da parte igual à Super da parte, cada um fica com Black = Super). **A meta da semana é recalculada** no começo de cada semana: o que falta para cada faixa do mês ÷ semanas que faltam (semana que ainda não começou usa o vendido até hoje). **"Quanto precisa por dia" e o forecast do mês contam só dias úteis** (segunda a sexta, sem feriados). Meses salvos no modelo antigo (pesos, `superPercent` e semanas digitadas) continuam com a Meta e a Super salvas de cada pessoa, mas já com a semana recalculada e os dias úteis. Regras em RN-69 a RN-73. **Fase de teste com o gestor: só `master` e `admin`** (b2b, b2g, vendor e sdr → `403`; sem login → `401`). Não mexe na meta das TVs (`BLACK_FRIDAY_GOAL*` do `.env`). Mês fora do formato `AAAA-MM` ou setor diferente de `b2b`/`b2g` → `400`.
+Metas em R$ por setor, por vendedor e por semana, com três faixas: Meta, Super meta e Meta black (a black só no mês em que começa uma campanha marcada com Meta black, `hasBlackTier` em `/campaigns`). **Modelo de níveis** (planilha do comercial, desde 11/11/2026): cada setor tem uma tabela de níveis para Farmer e outra para Venda, com **Meta e Super em R$**; cada vendedor recebe a Meta e a Super do nível dele (o gestor pode ajustar à mão), e a parte de cada tipo é a soma das pessoas. Há também o ticket médio e a taxa de conversão de leads (%) de cada tipo, para "quantas vendas faltam" e "quantos leads faltam" (planilha de vendas: leads = o que falta ÷ (ticket × conversão), com 30% em Venda). **A Meta black de Farmer e a de Venda são digitadas** (`farmBlack` e `salesBlack`); cada uma pode ser igual à Super da parte, mas não menor (no B2B, a Black de Venda é a própria Super de Venda). Elas não precisam bater com a meta da campanha (a campanha só decide em qual mês existe a Meta black). A Black de cada parte vai para as pessoas na proporção da Super de cada uma (com a Black da parte igual à Super da parte, cada um fica com Black = Super). **A meta da semana é recalculada** no começo de cada semana: o que falta para cada faixa do mês ÷ semanas que faltam (semana que ainda não começou usa o vendido até hoje). **"Quanto precisa por dia" e o forecast do mês contam só dias úteis** (segunda a sexta, sem feriados). Meses salvos no modelo antigo (pesos, `superPercent` e semanas digitadas) continuam com a Meta e a Super salvas de cada pessoa, mas já com a semana recalculada e os dias úteis. Regras em RN-69 a RN-73 e RN-79/RN-80. **Ver: `master` e todo `admin`** (os dois setores). **Cadastrar, editar, excluir e escolher o que os vendedores veem: `master` e o `admin` que gerencia o setor da URL** (`manageSegment` do usuário; admin sem setor gravado gerencia os dois); admin de outro setor → `403 "Você só gerencia as metas do B2B"`. b2b, b2g, vendor e sdr → `403` em todas; sem login → `401`. Não mexe na meta das TVs (`BLACK_FRIDAY_GOAL*` do `.env`). Mês fora do formato `AAAA-MM` ou setor diferente de `b2b`/`b2g` → `400`.
+
+### `GET /goals`
+
+Listagem das metas cadastradas (tela "Metas cadastradas"), um item por mês e setor, do mês mais novo para o mais antigo (inclui meses futuros):
+
+```json
+[{ "month": "2026-12", "segment": "b2b", "model": "levels",
+   "tiers": { "goal": 108000, "super": 132500, "black": 0 },
+   "parts": { "farm": { "goal": 26000, "super": 32500, "black": 0 }, "sales": { "goal": 82000, "super": 100000, "black": 0 } },
+   "people": 9, "levels": 6, "visibility": { "open": true, "hidden": [] }, "updatedBy": "admin@...", "updatedAt": "..." }]
+```
+
+`tiers`/`parts`: as faixas do setor e de cada parte, com a mesma conta do progresso (no mês com Meta black, a Black digitada). `visibility`: o que os vendedores do setor veem do mês (ver abaixo).
 
 ### `GET /goals/:month`
 
@@ -908,7 +926,7 @@ Para a tela de cadastro.
         "superPercent": null, "farmBlack": 80000, "salesBlack": 120000, "tickets": { "farm": 2000, "sales": 3000 }, "conversion": { "farm": null, "sales": 30 },
         "levels": [{ "key": "junior", "name": "Júnior", "type": "farm", "goal": 87625, "superGoal": 109531.25, "weight": null }], "blackTyped": true,
         "people": [{ "vendorId": "...", "type": "farm", "level": "junior", "goal": 87625, "superGoal": 109531.25, "blackGoal": null, "weeks": [] }],
-        "updatedBy": "admin@...", "updatedAt": "..." },
+        "visibility": { "open": true, "hidden": [] }, "updatedBy": "admin@...", "updatedAt": "..." },
       "previous": null,
       "vendors": [{ "vendorId": "...", "name": "...", "job": "B2B Venda", "imageUrl": "...", "teamId": "...", "teamName": "...", "type": "sales" }]
     },
@@ -931,7 +949,16 @@ Body (`strictObject`): `{ levels: [{ key, name, type: "farm" | "sales", goal, su
 - a meta do setor (soma das pessoas) > 0;
 - no mês com Meta black: em cada parte com Meta, a Black digitada (`"Informe a Meta black de Vendas"`) e ≥ a Super da parte (ex.: `"Vendas: a Meta black não pode ser menor que a Super meta (R$ 1.500,00)"`); a Black de cada pessoa ≥ a Super dela; a soma das Blacks de cada parte = a Black da parte, no centavo (ex.: `"Meta black Vendas: distribuído R$ 2.500,00 de R$ 3.000,00"`).
 
-Responde o `config` salvo, com `updatedBy` = e-mail de quem salvou.
+Responde o `config` salvo, com `updatedBy` = e-mail de quem salvou. Salvar de novo não muda o `visibility`; o primeiro cadastro de um mês copia o `visibility` do último mês salvo do setor (sem nenhum, liberado e com tudo à mostra).
+
+### `PUT /goals/:month/:segment/visibility`
+
+O que os vendedores do setor veem do mês em "Minhas metas" (`GET /me/goals`). Body (`strictObject`): `{ "open": true, "hidden": ["forecast", "black"] }`.
+
+- `open`: `false` fecha o mês para os vendedores (ex.: mês futuro ainda não divulgado): eles recebem `person: null` e `closed: true`.
+- `hidden`: o que fica escondido. Widgets: `summary` (resumo), `month` (faixas do mês), `forecast` (previsão), `comparison` (comparação com o mês anterior), `breakdown` (vendas e leads que faltam), `week` (semana atual), `evolution` (evolução), `weeks` (metas por semana). Faixas: `super` e `black` — faixa escondida some de todos os widgets (faixas, previsão, semanas e histórico), e a faixa atual, o que falta e o excedente são recalculados sem ela. Repetidos são ignorados; item desconhecido → `400`.
+
+Responde `data: { open, hidden }`. Mês sem meta cadastrada no setor → `404`. Mês salvo antes desta configuração (sem o campo) vale como `{ open: true, hidden: [] }`.
 
 ### `DELETE /goals/:month/:segment`
 
@@ -962,7 +989,7 @@ Progresso do mês (vendas `ativa`, pelo `realizedAt` no horário de São Paulo, 
 - `available`: as faixas do mês (`["goal", "super"]` fora do mês da campanha; com `"black"` nele). `current`: a primeira ainda não batida; bateu todas, fica na última e o que passou dela vai em `excess`. `percent` é do `target` (a faixa atual).
 - `parts`: progresso de Farmer e de Venda, cada um com as próprias faixas. `goal` do setor = soma das partes.
 - `tiers` da pessoa: a Meta, a Super e a Black são as que o gestor salvou (`superGoal`/`blackGoal`). Mês salvo antes desses campos: a Super e a Black da parte são divididas na proporção da Meta de cada um. Se a meta do setor na campanha mudar depois do cadastro, a Black de cada pessoa acompanha na mesma proporção.
-- Semanas da pessoa: a faixa da semana = (faixa do mês − vendido antes da semana começar) ÷ semanas que faltam, inclusive ela; semana que ainda não começou usa o vendido até hoje. Faixa do mês já batida antes da semana → 0 na semana. As semanas do setor, do time e do total são a soma das pessoas.
+- Semanas da pessoa: a faixa da semana = (faixa do mês − vendido antes da semana começar) ÷ semanas que faltam, inclusive ela, então o que sobrou de uma semana é dividido igualmente entre as seguintes. Semana que ainda não começou repete a da semana atual (antes do mês começar, todas dividem a faixa do mês igualmente). Faixa do mês já batida antes da semana → 0 na semana. As semanas do setor, do time e do total são a soma das pessoas.
 - `pace` é em relação à Meta (faixa normal), em **dias úteis** (segunda a sexta, sem feriados): `elapsedDays` inclui hoje; `expected` = quanto já deveria ter até hoje; `daysToGo` = dias úteis de hoje (inclusive) até o fim; `neededPerDay` = quanto falta ÷ `daysToGo`; `projection` = ritmo atual até o fim.
 - `ticket` e `salesNeeded` (só da pessoa, quando o mês tem ticket do tipo dela): quantas vendas faltam para a faixa atual = `remaining` ÷ ticket, arredondado para cima. `conversion` e `leadsNeeded` (com ticket e conversão do tipo): quantos leads faltam = `remaining` ÷ (ticket × conversão%), para cima. 
 - `people` vem do mais perto para o mais longe da Meta; `teams` = soma das pessoas de cada time; `cumulative` = acumulado por dia (`days`).

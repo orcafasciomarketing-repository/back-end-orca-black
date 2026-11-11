@@ -23,4 +23,7 @@ const isMasterEmail = (email) => !!MASTER_EMAIL && email === MASTER_EMAIL;
 // Setor que cada perfil enxerga: master e admin veem todos (null), b2b e b2g só o próprio setor
 const getRoleSegment = (role) => (role === "b2b" || role === "b2g" ? role : null);
 
-module.exports = { ROLES, PERSON_ROLES, isPersonRole, getUserRole, isMasterEmail, getRoleSegment };
+// Setor cujas metas um admin gerencia (cadastro e o que os vendedores veem). Sem o campo, o admin gerencia todos
+const MANAGE_SEGMENTS = ["b2b", "b2g"];
+
+module.exports = { MANAGE_SEGMENTS, ROLES, PERSON_ROLES, isPersonRole, getUserRole, isMasterEmail, getRoleSegment };

@@ -1,6 +1,9 @@
 const zod = require("zod");
 
-const { ROLES, PERSON_ROLES } = require("../../../config/roles");
+const { MANAGE_SEGMENTS, ROLES, PERSON_ROLES } = require("../../../config/roles");
+
+// null = todos os setores
+const manageSegment = zod.enum(MANAGE_SEGMENTS, { message: "Setor inválido" }).nullable().optional();
 
 const objectId = zod.string().regex(/^[0-9a-f]{24}$/i, "Pessoa inválida");
 
@@ -31,13 +34,14 @@ const CreateUserSchema = zod
     role: zod.enum(ROLES, { message: "Perfil inválido" }),
     vendorId: objectId.optional(),
     sdrId: objectId.optional(),
+    manageSegment,
   })
   .superRefine((obj, ctx) => {
     checkPasswordConfirmation(obj, ctx);
     checkPersonLink(obj, ctx);
   });
 
-// Troca de perfil e/ou nova senha
+// Troca de perfil, do setor que gerencia e/ou nova senha
 const UpdateUserSchema = zod
   .strictObject({
     role: zod.enum(ROLES, { message: "Perfil inválido" }).optional(),
@@ -45,10 +49,11 @@ const UpdateUserSchema = zod
     passwordConfirmation: zod.coerce.string().optional(),
     vendorId: objectId.optional(),
     sdrId: objectId.optional(),
+    manageSegment,
   })
   .superRefine((obj, ctx) => {
-    if (obj.role === undefined && obj.password === undefined) {
-      ctx.addIssue({ path: ["role"], message: "Informe o perfil ou a nova senha" });
+    if (obj.role === undefined && obj.password === undefined && obj.manageSegment === undefined) {
+      ctx.addIssue({ path: ["role"], message: "Informe o perfil, o setor que gerencia ou a nova senha" });
     }
     checkPasswordConfirmation(obj, ctx);
     checkPersonLink(obj, ctx);

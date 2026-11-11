@@ -177,13 +177,20 @@ const weekTiers = (personTiers, weekGoals) => {
 };
 
 // Meta da semana recalculada (como a planilha): no começo de cada semana, o que falta para cada faixa do mês
-// ÷ semanas que faltam (inclusive ela). Semana que ainda não começou usa o vendido até hoje.
+// ÷ semanas que faltam (inclusive ela). Assim, o que sobrar de uma semana é dividido igualmente entre as
+// seguintes. As semanas que ainda não começaram repetem a meta da semana atual (o que sobrar dela só é
+// redistribuído quando ela acabar); antes do mês começar, todas dividem a faixa do mês igualmente.
 // daily: centavos de cada dia de days (dias do mês da meta)
-const dynamicWeekTiers = ({ personTiers, daily, days, weeks, today }) =>
-  weeks.map((week, index) => {
-    const cutoff = week.start <= today ? week.start : addDays(today, 1);
-    const before = days.reduce((sum, day, dayIndex) => (day < cutoff ? sum + daily[dayIndex] : sum), 0);
-    const left = weeks.length - index;
+const dynamicWeekTiers = ({ personTiers, daily, days, weeks, today }) => {
+  if (!weeks.length) return [];
+  const soldBefore = (day) => days.reduce((sum, item, index) => (item < day ? sum + daily[index] : sum), 0);
+  const currentIndex = weeks.findIndex((week) => week.start <= today && today <= week.end);
+  const anchor = currentIndex >= 0 ? currentIndex : today < weeks[0].start ? 0 : weeks.length - 1;
+
+  return weeks.map((week, index) => {
+    const base = week.start <= today ? index : anchor;
+    const before = soldBefore(weeks[base].start);
+    const left = weeks.length - base;
     return Object.fromEntries(
       TIERS.map((tier) => {
         const target = toCents(personTiers[tier] ?? 0);
@@ -191,6 +198,7 @@ const dynamicWeekTiers = ({ personTiers, daily, days, weeks, today }) =>
       }),
     );
   });
+};
 
 const sumTiers = (list) =>
   list.reduce(

@@ -25,6 +25,7 @@ const {
   combineMonthForecasts,
 } = require("./goalCalculator");
 const { forecastModelOf } = require("../../../config/forecastModels");
+const { toVisibility, neededOf } = require("./goalVisibility");
 
 const SEGMENTS = ["b2b", "b2g"];
 
@@ -106,6 +107,7 @@ const toConfig = (config) => ({
     blackGoal: person.blackGoal ?? null,
     weeks: [...(person.weeks ?? [])],
   })),
+  visibility: toVisibility(config.visibility),
   updatedBy: config.updatedBy ?? null,
   updatedAt: config.updatedAt ?? null,
 });
@@ -245,7 +247,12 @@ exports.saveMonth = async (month, segment, data, updatedBy) => {
     }
   }
 
+  // Mês novo: o que os vendedores veem começa igual ao do último mês cadastrado do setor
+  const existing = await MonthlyGoalRepository.findOne(month, segment);
+  const previous = existing ? null : await MonthlyGoalRepository.findLatestBefore(month, segment);
+
   const saved = await MonthlyGoalRepository.upsert(month, segment, {
+    ...(!existing && { visibility: toVisibility(previous?.visibility) }),
     farmGoal: config.farmGoal,
     salesGoal: config.salesGoal,
     farmSuper: config.farmSuper,
@@ -271,6 +278,34 @@ exports.saveMonth = async (month, segment, data, updatedBy) => {
 
 exports.deleteMonth = async (month, segment) => {
   return await MonthlyGoalRepository.deleteOne(month, segment);
+};
+
+// Listagem das metas cadastradas (todos os meses e setores): as faixas do setor, quantas pessoas, o que os
+// vendedores veem e quem salvou por último
+exports.listMonths = async () => {
+  const [configs, campaigns] = await Promise.all([MonthlyGoalRepository.findAll(), CampaignService.findAll()]);
+  return configs.map((config) => {
+    const black = blackInfo(config.month, campaigns);
+    const byType = typeTiers(black.active ? withSectorBlack(config, black) : config, black.active);
+    return {
+      month: config.month,
+      segment: config.segment,
+      model: config.levels.some((level) => level.type) ? "levels" : "weights",
+      tiers: segmentTiers(byType),
+      parts: byType,
+      people: config.people.length,
+      levels: config.levels.length,
+      visibility: toVisibility(config.visibility),
+      updatedBy: config.updatedBy ?? null,
+      updatedAt: config.updatedAt ?? null,
+    };
+  });
+};
+
+// O que os vendedores do setor veem do mês (só de mês com meta cadastrada)
+exports.saveVisibility = async (month, segment, visibility) => {
+  const saved = await MonthlyGoalRepository.updateVisibility(month, segment, toVisibility(visibility));
+  return saved ? toVisibility(saved.visibility) : null;
 };
 
 const sumOf = (values) => values.reduce((total, value) => total + value, 0);
@@ -327,8 +362,7 @@ exports.getProgress = async (month, now = new Date()) => {
     return {
       ...progress,
       pace: paceOf({ realized, goal: tiers.goal, start, end, today }),
-      ...(ticket > 0 && { salesNeeded: Math.ceil(progress.remaining / ticket) }),
-      ...(ticket > 0 && conversion > 0 && { leadsNeeded: Math.ceil(progress.remaining / ((ticket * conversion) / 100)) }),
+      ...neededOf(progress.remaining, ticket, conversion),
     };
   };
   const forecastOf = (dailyCents, tiers, segment) =>

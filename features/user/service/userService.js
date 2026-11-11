@@ -27,15 +27,26 @@ const resolvePersonLink = async (role, ids, ignoreUserId = null) => {
   return { [field]: ids[field] };
 };
 
-// Usuário como vai para o front: sem a senha e com o perfil que vale (o master vem como "master")
+// Usuário como vai para o front: sem a senha e com o perfil que vale (o master vem como "master").
+// manageSegment: o setor cujas metas o admin gerencia (null = todos; nos outros perfis, sempre null)
 exports.toPublicUser = (user) => {
   const { passwordHash, ...data } = user.toJSON();
-  return { ...data, role: getUserRole(user) };
+  const role = getUserRole(user);
+  return { ...data, role, manageSegment: role === "admin" ? data.manageSegment ?? null : null };
 };
 
-// currentUserRole: perfil de quem cadastra. Só o master cadastra o e-mail do master
+// Setor que gerencia de um admin novo: o master escolhe; outro admin cria com o mesmo setor dele (assim um admin
+// de um setor não cria um admin com mais acesso que ele). Outros perfis não têm
+const manageSegmentOnCreate = (role, manageSegment, currentUser) => {
+  if (role !== "admin") return null;
+  if (currentUser.role === "master") return manageSegment ?? null;
+  return currentUser.manageSegment ?? null;
+};
+
+// currentUser: quem cadastra (perfil e setor que gerencia). Só o master cadastra o e-mail do master
 // (senão um admin criaria a conta com esse e-mail e viraria master)
-exports.createUser = async ({ email, password, role, vendorId, sdrId }, currentUserRole) => {
+exports.createUser = async ({ email, password, role, vendorId, sdrId, manageSegment }, currentUser) => {
+  const currentUserRole = currentUser.role;
   if (isMasterEmail(email) && currentUserRole !== "master") {
     throw ValidationError("Este e-mail é reservado");
   }
@@ -48,8 +59,11 @@ exports.createUser = async ({ email, password, role, vendorId, sdrId }, currentU
 
   const personLink = await resolvePersonLink(role, { vendorId, sdrId });
   const hashedPassword = await hashPassword(password);
+  const segment = manageSegmentOnCreate(role, manageSegment, currentUser);
 
-  return exports.toPublicUser(await User.createUser({ email, passwordHash: hashedPassword, role, ...personLink }));
+  return exports.toPublicUser(
+    await User.createUser({ email, passwordHash: hashedPassword, role, ...personLink, ...(segment && { manageSegment: segment }) }),
+  );
 };
 
 exports.findUserByEmail = async (email) => {
@@ -77,8 +91,8 @@ const findExistingUser = async (id) => {
 
 // currentUserId: quem está fazendo a alteração. O admin não muda o próprio perfil
 // nem se exclui, para nunca ficar sem nenhum admin
-exports.updateUser = async (id, { role, password, vendorId, sdrId }, currentUserId) => {
-  await findExistingUser(id);
+exports.updateUser = async (id, { role, password, vendorId, sdrId, manageSegment }, currentUserId) => {
+  const existing = await findExistingUser(id);
 
   if (role !== undefined && id === currentUserId) {
     throw ValidationError("Você não pode alterar o seu próprio perfil");
@@ -96,6 +110,16 @@ exports.updateUser = async (id, { role, password, vendorId, sdrId }, currentUser
     }
   }
   if (password !== undefined) data.passwordHash = await hashPassword(password);
+
+  // Setor que gerencia: só no perfil admin. Trocar para outro perfil tira o setor
+  const finalRole = role ?? existing.role ?? "admin";
+  if (finalRole !== "admin") {
+    if (manageSegment) throw ValidationError("Só o perfil Admin tem setor que gerencia");
+    if (role !== undefined) unset.manageSegment = "";
+  } else if (manageSegment !== undefined) {
+    if (manageSegment) data.manageSegment = manageSegment;
+    else unset.manageSegment = "";
+  }
 
   const updatedUser = await User.updateUser(id, data, unset);
 

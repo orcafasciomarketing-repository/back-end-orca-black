@@ -109,6 +109,46 @@ describe("Cálculo das metas mensais (goalCalculator)", () => {
   });
 });
 
+describe("Semanas recalculadas (goalCalculator.dynamicWeekTiers)", () => {
+  // Novembro/2026: semanas 02, 09, 16, 23 e 30. Meta 125.000; vendeu 4.396 na semana 1 e 8.792 na semana 2
+  const weeks = calc.monthWeeks("2026-11");
+  const days = calc.monthDays(weeks);
+  const daily = days.map((day) => (day === "2026-11-04" ? 439600 : day === "2026-11-10" ? 879200 : 0));
+  const tiersOf = (today) =>
+    calc.dynamicWeekTiers({ personTiers: { goal: 125000, super: 150000, black: 0 }, daily, days, weeks, today });
+
+  it("antes do mês começar, todas as semanas dividem a meta igualmente", () => {
+    assert.deepEqual(
+      tiersOf("2026-10-30").map((week) => week.goal),
+      [25000, 25000, 25000, 25000, 25000],
+    );
+  });
+
+  it("na semana atual: o que sobrou da anterior vai para ela e as futuras repetem a meta dela", () => {
+    // Semana 2: (125.000 − 4.396) ÷ 4 = 30.151; as semanas 3, 4 e 5 também 30.151
+    assert.deepEqual(
+      tiersOf("2026-11-11").map((week) => week.goal),
+      [25000, 30151, 30151, 30151, 30151],
+    );
+    assert.deepEqual(tiersOf("2026-11-11")[3], { goal: 30151, super: 36401, black: 0 });
+  });
+
+  it("quando a semana acaba sem bater, o que faltou é dividido igualmente entre as seguintes", () => {
+    // Semana 3: (125.000 − 13.188) ÷ 3 = 37.270,67; a 2ª deixou de vender 21.359 → +7.119,67 em cada uma das 3
+    assert.deepEqual(
+      tiersOf("2026-11-17").map((week) => week.goal),
+      [25000, 30151, 37270.67, 37270.67, 37270.67],
+    );
+  });
+
+  it("depois do mês, cada semana fica com o valor do começo dela", () => {
+    assert.deepEqual(
+      tiersOf("2026-12-10").map((week) => week.goal),
+      [25000, 30151, 37270.67, 55906, 111812],
+    );
+  });
+});
+
 describe("Forecast do mês da meta (goalCalculator.monthForecast)", () => {
   const days = ["2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06", "2026-11-07", "2026-11-08"];
 

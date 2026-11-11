@@ -1,6 +1,6 @@
 const { Schema, model } = require("mongoose");
 
-const { ROLES } = require("../../../config/roles");
+const { MANAGE_SEGMENTS, ROLES } = require("../../../config/roles");
 
 const UserSchema = new Schema(
   {
@@ -31,6 +31,12 @@ const UserSchema = new Schema(
     sdrId: {
       type: Schema.Types.ObjectId,
       ref: "SDR",
+    },
+    // Só no perfil admin: o setor cujas metas ele gerencia (cadastro e o que os vendedores veem). Ele continua
+    // vendo tudo. Sem o campo, gerencia todos
+    manageSegment: {
+      type: String,
+      enum: MANAGE_SEGMENTS,
     },
   },
   { timestamps: true },
