@@ -879,7 +879,7 @@ Exclui um lançamento errado; o saldo se recalcula. Retirada que não existe →
 
 ## Metas mensais — `/goals`
 
-Metas em R$ por setor, por vendedor e por semana, com três faixas: Meta, Super meta e Meta black (a black só no mês em que começa uma campanha marcada com Meta black, `hasBlackTier` em `/campaigns`). O gestor define em R$ a Meta de Farmer (renovação) e a de Venda (o setor é a soma); a Super de cada parte é a Meta dela × `superPercent` (o único percentual). A Meta black do setor é a meta do setor nessa campanha (a mesma das TVs): o gestor só diz quanto dela é de Farmer (`farmBlack`) e Venda fica com o resto. Depois, cada faixa da parte vai para as pessoas da parte na proporção da Meta de cada uma (que vem dos pesos de senioridade) e para as semanas na proporção da Meta semanal. Regras em RN-69 a RN-73. **Fase de teste com o gestor: só `master` e `admin`** (b2b, b2g, vendor e sdr → `403`; sem login → `401`). Não mexe na meta das TVs (`BLACK_FRIDAY_GOAL*` do `.env`). Mês fora do formato `AAAA-MM` ou setor diferente de `b2b`/`b2g` → `400`.
+Metas em R$ por setor, por vendedor e por semana, com três faixas: Meta, Super meta e Meta black (a black só no mês em que começa uma campanha marcada com Meta black, `hasBlackTier` em `/campaigns`). **Modelo de níveis** (planilha do comercial, desde 11/11/2026): cada setor tem uma tabela de níveis para Farmer e outra para Venda, com **Meta e Super em R$** e a divisão da meta por origem (% de antecipação, up-sell e churn); cada vendedor recebe a Meta e a Super do nível dele (o gestor pode ajustar à mão), e a parte de cada tipo é a soma das pessoas. Há também o ticket médio e a taxa de conversão de leads (%) de cada tipo, para "quantas vendas faltam" e "quantos leads faltam" (planilha de vendas: leads = o que falta ÷ (ticket × conversão), com 30% em Venda). A Meta black do setor é a meta do setor nessa campanha (a mesma das TVs): o gestor só diz quanto dela é de Farmer (`farmBlack`) e Venda fica com o resto; a Black de cada parte vai para as pessoas na proporção da Meta de cada uma. **A meta da semana é recalculada** no começo de cada semana: o que falta para cada faixa do mês ÷ semanas que faltam (semana que ainda não começou usa o vendido até hoje). **"Quanto precisa por dia" e o forecast do mês contam só dias úteis** (segunda a sexta, sem feriados). Meses salvos no modelo antigo (pesos, `superPercent` e semanas digitadas) continuam com a Meta e a Super salvas de cada pessoa, mas já com a semana recalculada e os dias úteis. Regras em RN-69 a RN-73. **Fase de teste com o gestor: só `master` e `admin`** (b2b, b2g, vendor e sdr → `403`; sem login → `401`). Não mexe na meta das TVs (`BLACK_FRIDAY_GOAL*` do `.env`). Mês fora do formato `AAAA-MM` ou setor diferente de `b2b`/`b2g` → `400`.
 
 ### `GET /goals/:month`
 
@@ -892,9 +892,10 @@ Para a tela de cadastro.
   "black": { "month": "2026-11", "active": true, "total": 3000000, "sectorGoals": { "b2b": 2000000, "b2g": 1000000 } },
   "segments": {
     "b2b": {
-      "config": { "month": "2026-11", "farmGoal": 48000, "salesGoal": 72000, "superPercent": 125, "farmBlack": 80000, "salesBlack": 120000,
-        "levels": [{ "key": "junior", "name": "Júnior", "weight": 1 }],
-        "people": [{ "vendorId": "...", "type": "sales", "level": "junior", "goal": 9000, "superGoal": 10800, "blackGoal": null, "weeks": [1800, 1800, 1800, 1800, 1800] }],
+      "config": { "month": "2026-11", "model": "levels", "farmGoal": 26000, "salesGoal": 82000, "farmSuper": 32500, "salesSuper": 100000,
+        "superPercent": null, "farmBlack": 80000, "salesBlack": 120000, "tickets": { "farm": 2000, "sales": 3000 }, "conversion": { "farm": null, "sales": 30 },
+        "levels": [{ "key": "junior", "name": "Júnior", "type": "farm", "goal": 87625, "superGoal": 109531.25, "anticipation": 60, "upsell": 10, "churn": 20, "weight": null }],
+        "people": [{ "vendorId": "...", "type": "farm", "level": "junior", "goal": 87625, "superGoal": 109531.25, "blackGoal": null, "weeks": [] }],
         "updatedBy": "admin@...", "updatedAt": "..." },
       "previous": null,
       "vendors": [{ "vendorId": "...", "name": "...", "job": "B2B Venda", "imageUrl": "...", "teamId": "...", "teamName": "...", "type": "sales" }]
@@ -906,19 +907,17 @@ Para a tela de cadastro.
 
 - `weeks`: semanas (segunda a domingo) que **começam** no mês; a última pode terminar no mês seguinte.
 - `black.active`: no mês começa uma campanha com Meta black. `black.campaign`: `{ id, name }` dela (ou `null`); `black.month`: o mês (ou `null`). `sectorGoals`: a meta de cada setor dessa campanha (`0` sem campanha ou sem meta). O `salesBlack` do `config` é só registro: o progresso sempre usa a Black do setor da campanha − `farmBlack`. Salvar o mês com Meta black e a campanha sem meta do setor → `400`.
-- `config`: o que está salvo (ou `null`). `previous`: sem `config`, o último mês salvo antes deste, para a tela copiar.
+- `config`: o que está salvo (ou `null`). `model`: `"levels"` (modelo de níveis) ou `"weights"` (mês salvo no modelo antigo, com `levels[].weight`, `superPercent` e `people[].weeks`; a tela converte para níveis ao abrir). `farmSuper`/`salesSuper`: a Super de cada parte (soma das pessoas). `previous`: sem `config`, o último mês salvo antes deste, para a tela copiar.
 - `vendors`: vendedores do setor pelo cargo (`"B2B ..."` / `"B2G ..."`); `type` = `farm` se o cargo tem "Farmer", senão `sales`.
 
 ### `PUT /goals/:month/:segment`
 
-Body (`strictObject`): `{ farmGoal, salesGoal, superPercent, farmBlack?, levels: [{ key, name, weight }], people: [{ vendorId, level, goal, superGoal?, blackGoal?, weeks: [...] }] }` (valores em R$; `superGoal`/`blackGoal` são a Super e a Black da pessoa, e sem eles vale a parte proporcional à Meta dela; `blackGoal` só é gravado no mês da campanha; `farmBlack` só é gravado no mês da campanha, junto com `salesBlack` = Black do setor − `farmBlack`). Substitui o mês inteiro daquele setor (os outros meses não mudam). Só salva quando tudo fecha (senão `400` com a mensagem):
+Body (`strictObject`): `{ levels: [{ key, name, type: "farm" | "sales", goal, superGoal, anticipation?, upsell?, churn? }], tickets?: { farm, sales }, conversion?: { farm, sales }, farmBlack?, people: [{ vendorId, level, goal, superGoal, blackGoal? }] }` (valores em R$; percentuais de 0 a 100, padrão 0; ticket `null` = sem ticket; conversão de 0 (exclusivo) a 100%, `null` = sem conversão). `goal`/`superGoal` da pessoa são os finais (os do nível ou ajustados à mão); `blackGoal` só é gravado no mês com Meta black (sem ele, a parte proporcional à Meta); `farmBlack` também, junto com `salesBlack` = Black do setor − `farmBlack`. O backend grava `farmGoal`/`salesGoal` e `farmSuper`/`salesSuper` como a soma das pessoas de cada tipo, `superPercent: null` e `weeks: []`. Campo do modelo antigo (`superPercent`, `weight`, `weeks`) → `400`. Substitui o mês inteiro daquele setor (os outros meses não mudam). Só salva quando tudo fecha (senão `400` com a mensagem):
 
-- `farmGoal + salesGoal` > 0; `superPercent` > 100; no mês da campanha, a Black do setor configurada no `.env`, `farmBlack` ≤ a Black do setor e, em cada parte com Meta, a Black > a Super dela (ex.: `"Vendas: a Meta black precisa ser maior que a Super meta (R$ 1.500,00)"`); pelo menos um nível, com peso > 0 e chave única;
-- cada vendedor existe, é do setor, aparece uma vez e tem um nível válido;
-- uma meta por semana do mês, e a soma das semanas = a meta mensal do vendedor (no centavo);
-- a soma das metas dos Farmers = `farmGoal` e a dos outros = `salesGoal` (no centavo). Ex.: `"Renovação: distribuído R$ 40.000,00 de R$ 48.000,00"`;
-- a Super de cada pessoa ≥ a Meta dela e, no mês da campanha, a Black ≥ a Super (ex.: `"A Super meta de Fulano não pode ser menor que a Meta do mês (R$ 400,00)"`);
-- a soma das Supers (e, no mês da campanha, das Blacks) de cada parte = a Super (Black) da parte, no centavo. Ex.: `"Super meta Vendas: distribuído R$ 1.600,00 de R$ 1.500,00"`.
+- pelo menos um nível; nível repetido (mesma chave no mesmo tipo) → `"Há níveis repetidos"`; Super do nível ≥ Meta (ex.: `"Vendas · Júnior: a Super meta não pode ser menor que a Meta (R$ 4.000,00)"`); antecipação + up-sell + churn ≤ 100%;
+- cada vendedor existe, é do setor, aparece uma vez e tem um nível **do tipo dele** (ex.: `"Escolha um nível de Vendas válido para Fulano"`); Super ≥ Meta da pessoa;
+- a meta do setor (soma das pessoas) > 0;
+- no mês com Meta black: a meta do setor na campanha cadastrada, `farmBlack` ≤ a Black do setor e, em cada parte com Meta, a Black > a Super dela (ex.: `"Vendas: a Meta black precisa ser maior que a Super meta (R$ 1.500,00)"`); a Black de cada pessoa ≥ a Super dela; a soma das Blacks de cada parte = a Black da parte, no centavo (ex.: `"Meta black Vendas: distribuído R$ 2.500,00 de R$ 3.000,00"`).
 
 Responde o `config` salvo, com `updatedBy` = e-mail de quem salvou.
 
@@ -939,26 +938,29 @@ Progresso do mês (vendas `ativa`, pelo `realizedAt` no horário de São Paulo, 
     "parts": { "farm": { "goal": 48000, "...": "<progresso>" }, "sales": { "goal": 72000, "...": "<progresso>" } },
     "month": "<progresso>", "forecast": "<forecast>", "weeks": ["<progresso da semana>"], "cumulative": [0, 1200] }],
   "people": [{ "vendorId": "...", "segment": "b2b", "type": "sales", "name": "...", "job": "...", "imageUrl": "...",
-    "teamId": "...", "teamName": "...", "level": "junior", "levelName": "Júnior",
+    "teamId": "...", "teamName": "...", "level": "junior", "levelName": "Júnior", "ticket": 2000,
+    "origins": { "anticipation": { "percent": 60, "value": 52575 }, "upsell": { "percent": 10, "value": 8762.5 }, "churn": { "percent": 20, "value": 17525 } },
     "month": "<progresso>", "forecast": "<forecast>", "weeks": ["<progresso da semana>"], "cumulative": [] }],
   "teams": [{ "teamId": "...", "teamName": "...", "imageUrl": "...", "members": 4, "month": "<progresso>", "cumulative": [] }],
   "summary": { "people": 11, "reachedGoal": 3, "reachedSuper": 3, "reachedBlack": 2, "onPace": 4, "behind": 7 }
 }
 ```
 
-`<progresso>`: `{ realized, tiers: { goal, super, black }, available, reached: ["goal", ...], current: "goal" | "super" | "black", target, percent, remaining, excess, pace: { totalDays, elapsedDays, remainingDays, expected, status: "done" | "ahead" | "behind" | "upcoming", neededPerDay, projection } }`.
+`<progresso>`: `{ realized, tiers: { goal, super, black }, available, reached: ["goal", ...], current: "goal" | "super" | "black", target, percent, remaining, excess, salesNeeded?, leadsNeeded?, pace: { totalDays, elapsedDays, remainingDays, daysToGo, expected, status: "done" | "ahead" | "behind" | "upcoming", neededPerDay, projection } }`.
 
 - `available`: as faixas do mês (`["goal", "super"]` fora do mês da campanha; com `"black"` nele). `current`: a primeira ainda não batida; bateu todas, fica na última e o que passou dela vai em `excess`. `percent` é do `target` (a faixa atual).
 - `parts`: progresso de Farmer e de Venda, cada um com as próprias faixas. `goal` do setor = soma das partes.
-- `tiers` da pessoa: a Meta, a Super e a Black são as que o gestor salvou (`superGoal`/`blackGoal`). Mês salvo antes desses campos: a Super e a Black da parte são divididas na proporção da Meta de cada um. Se a Black do setor no `.env` mudar depois do cadastro, a Black de cada pessoa acompanha na mesma proporção. Nas semanas, na proporção da Meta semanal.
-- `pace` é em relação à Meta (faixa normal): `expected` = quanto já deveria ter até hoje; `neededPerDay` = quanto falta ÷ dias que faltam; `projection` = ritmo atual até o fim.
+- `tiers` da pessoa: a Meta, a Super e a Black são as que o gestor salvou (`superGoal`/`blackGoal`). Mês salvo antes desses campos: a Super e a Black da parte são divididas na proporção da Meta de cada um. Se a meta do setor na campanha mudar depois do cadastro, a Black de cada pessoa acompanha na mesma proporção.
+- Semanas da pessoa: a faixa da semana = (faixa do mês − vendido antes da semana começar) ÷ semanas que faltam, inclusive ela; semana que ainda não começou usa o vendido até hoje. Faixa do mês já batida antes da semana → 0 na semana. As semanas do setor, do time e do total são a soma das pessoas.
+- `pace` é em relação à Meta (faixa normal), em **dias úteis** (segunda a sexta, sem feriados): `elapsedDays` inclui hoje; `expected` = quanto já deveria ter até hoje; `daysToGo` = dias úteis de hoje (inclusive) até o fim; `neededPerDay` = quanto falta ÷ `daysToGo`; `projection` = ritmo atual até o fim.
+- `ticket` e `salesNeeded` (só da pessoa, quando o mês tem ticket do tipo dela): quantas vendas faltam para a faixa atual = `remaining` ÷ ticket, arredondado para cima. `conversion` e `leadsNeeded` (com ticket e conversão do tipo): quantos leads faltam = `remaining` ÷ (ticket × conversão%), para cima. `origins` (modelo de níveis): quanto da Meta do mês vem de antecipação, up-sell e churn, pelo % do nível; `null` no modelo antigo.
 - `people` vem do mais perto para o mais longe da Meta; `teams` = soma das pessoas de cada time; `cumulative` = acumulado por dia (`days`).
 - `total`: os setores somados (o "Todos" do admin), no mesmo formato de um setor. `null` em mês sem meta.
 - Mês sem meta: listas vazias e `summary` zerado.
 
 `<forecast>` (no total, em cada setor e em cada pessoa): `{ productiveDays: { elapsed, remaining }, pace: { current, last7, last30, month }, scenarios: { pessimistic, realistic, optimistic }, dailyStdDev, tiers: { goal: { target, requiredPace, paceCoverage, gap, probability }, super: {...}, black: {...} }, trajectory: { pessimistic: [...], realistic: [...], optimistic: [...] } }`.
 
-- Mesmo cálculo do `/analytics/forecast` (`monthForecast` em [goalCalculator.js](features/goals/service/goalCalculator.js)), com o modelo do setor (`config/forecastModels.js`; o B2G usa o do B2B por enquanto) para o setor e as pessoas dele; o total é a soma dos setores (`combineMonthForecasts`), como no `/analytics/forecast`. Aplicado ao mês da meta: dias produtivos (segunda a sábado, sem feriados de `config/campaign.js`) dentro das semanas do mês; venda em domingo ou feriado entra no dia produtivo anterior; hoje conta como dia que passou.
+- Mesmo cálculo do `/analytics/forecast` (`monthForecast` em [goalCalculator.js](features/goals/service/goalCalculator.js)), com o modelo do setor (`config/forecastModels.js`; o B2G usa o do B2B por enquanto) para o setor e as pessoas dele; o total é a soma dos setores (`combineMonthForecasts`), como no `/analytics/forecast`. Aplicado ao mês da meta: dias úteis (segunda a sexta, sem feriados de `config/campaign.js`) dentro das semanas do mês; venda no fim de semana ou feriado entra no dia útil anterior; hoje conta como dia que passou. (O `/analytics/forecast` da campanha continua de segunda a sábado.)
 - `pace.current` = média dos últimos 7 dias produtivos × 50% + dos últimos 30 × 30% + do mês × 20%. `scenarios` = realizado + ritmo × fator (0,8 / 1 / 1,2) × dias produtivos que faltam.
 - `tiers`: uma entrada por faixa do mês (`available`). `requiredPace` = (faixa − realizado) ÷ dias produtivos que faltam (`null` sem dias); `paceCoverage` = ritmo ÷ necessário (%); `gap` = faixa − realista (negativo = acima); `probability` (%) = chance de chegar na faixa pela normal (desvio dos últimos 30 dias produtivos). Já batida → 100; mês encerrado sem bater → 0; menos de 2 dias produtivos → `null`.
 - `trajectory`: um valor por dia de `days`, `null` antes de hoje; de hoje em diante, o acumulado projetado em cada cenário.

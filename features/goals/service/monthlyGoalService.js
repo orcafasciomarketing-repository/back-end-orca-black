@@ -17,7 +17,7 @@ const {
   typeTiers,
   segmentTiers,
   peopleTiers,
-  weekTiers,
+  dynamicWeekTiers,
   sumTiers,
   tierProgress,
   paceOf,
@@ -72,14 +72,31 @@ const toVendor = (vendor, teamsById) => {
   };
 };
 
+// model: "levels" (Meta e Super em R$ por nível, planilha do comercial) ou "weights" (modelo antigo, com pesos e
+// superPercent): o cadastro do front converte o antigo ao abrir
 const toConfig = (config) => ({
   month: config.month,
+  model: config.levels.some((level) => level.type) ? "levels" : "weights",
   farmGoal: config.farmGoal,
   salesGoal: config.salesGoal,
-  superPercent: config.superPercent,
+  farmSuper: config.farmSuper ?? null,
+  salesSuper: config.salesSuper ?? null,
+  superPercent: config.superPercent ?? null,
   farmBlack: config.farmBlack ?? null,
   salesBlack: config.salesBlack ?? null,
-  levels: config.levels.map(({ key, name, weight }) => ({ key, name, weight })),
+  tickets: { farm: config.tickets?.farm ?? null, sales: config.tickets?.sales ?? null },
+  conversion: { farm: config.conversion?.farm ?? null, sales: config.conversion?.sales ?? null },
+  levels: config.levels.map((level) => ({
+    key: level.key,
+    name: level.name,
+    type: level.type ?? null,
+    goal: level.goal ?? null,
+    superGoal: level.superGoal ?? null,
+    anticipation: level.anticipation ?? 0,
+    upsell: level.upsell ?? 0,
+    churn: level.churn ?? 0,
+    weight: level.weight ?? null,
+  })),
   people: config.people.map((person) => ({
     vendorId: String(person.vendorId),
     type: person.type,
@@ -87,7 +104,7 @@ const toConfig = (config) => ({
     goal: person.goal,
     superGoal: person.superGoal ?? null,
     blackGoal: person.blackGoal ?? null,
-    weeks: [...person.weeks],
+    weeks: [...(person.weeks ?? [])],
   })),
   updatedBy: config.updatedBy ?? null,
   updatedAt: config.updatedAt ?? null,
@@ -126,18 +143,28 @@ exports.getMonth = async (month) => {
   return { month, weeks, black: blackInfo(month, campaigns), segments };
 };
 
-// Só salva quando tudo fecha: cada vendedor do setor uma vez, nível existente, soma das semanas = mensal
-// e a soma das metas de cada tipo = a parte do setor (renovação e vendas)
+// Só salva quando tudo fecha: níveis sem repetição (por tipo) e com Super ≥ Meta, cada vendedor do setor uma vez
+// com um nível do tipo dele e Super ≥ Meta; a parte de cada tipo é a soma das pessoas. No mês com Meta black,
+// a Black de cada parte vem da campanha (Farmer digitado, Venda o resto) e cada pessoa tem Black ≥ Super
 exports.saveMonth = async (month, segment, data, updatedBy) => {
-  const weeks = monthWeeks(month);
   const { vendors } = await loadPeopleContext();
   const vendorsById = new Map(vendors.map((vendor) => [String(vendor._id), vendor]));
 
-  const levelKeys = data.levels.map((level) => level.key);
-  if (new Set(levelKeys).size !== levelKeys.length) throw ValidationError("Há níveis repetidos");
+  const levelId = (type, key) => `${type}:${key.trim()}`;
+  const levelIds = data.levels.map((level) => levelId(level.type, level.key));
+  if (new Set(levelIds).size !== levelIds.length) throw ValidationError("Há níveis repetidos");
+  for (const level of data.levels) {
+    const label = `${TYPE_LABELS[level.type]} · ${level.name.trim()}`;
+    if (toCents(level.superGoal) < toCents(level.goal)) {
+      throw ValidationError(`${label}: a Super meta não pode ser menor que a Meta (${money(level.goal)})`);
+    }
+    if (level.anticipation + level.upsell + level.churn > 100) {
+      throw ValidationError(`${label}: antecipação, up-sell e churn passam de 100% da meta`);
+    }
+  }
 
   const seen = new Set();
-  const totals = { farm: 0, sales: 0 };
+  const totals = { farm: { goal: 0, super: 0 }, sales: { goal: 0, super: 0 } };
   const people = data.people.map((person) => {
     const vendor = vendorsById.get(person.vendorId);
     if (!vendor) throw ValidationError("Vendedor não encontrado");
@@ -146,34 +173,44 @@ exports.saveMonth = async (month, segment, data, updatedBy) => {
     if (segmentOfJob(vendor.job) !== segment) {
       throw ValidationError(`${vendor.vendorName} não é do setor ${segment.toUpperCase()}`);
     }
-    if (!levelKeys.includes(person.level)) throw ValidationError(`Escolha um nível válido para ${vendor.vendorName}`);
-    if (person.weeks.length !== weeks.length) {
-      throw ValidationError(`${vendor.vendorName} precisa de uma meta para cada uma das ${weeks.length} semanas`);
-    }
-    const weeksCents = person.weeks.reduce((sum, value) => sum + toCents(value), 0);
-    if (weeksCents !== toCents(person.goal)) {
-      throw ValidationError(
-        `Semanas de ${vendor.vendorName}: a soma dá ${money(fromCents(weeksCents))}, mas a meta mensal é ${money(person.goal)}`,
-      );
-    }
-
     const type = typeOfJob(vendor.job);
-    totals[type] += toCents(person.goal);
+    if (!levelIds.includes(levelId(type, person.level))) {
+      throw ValidationError(`Escolha um nível de ${TYPE_LABELS[type]} válido para ${vendor.vendorName}`);
+    }
+    if (toCents(person.superGoal) < toCents(person.goal)) {
+      throw ValidationError(`A Super meta de ${vendor.vendorName} não pode ser menor que a Meta do mês (${money(person.goal)})`);
+    }
+    totals[type].goal += toCents(person.goal);
+    totals[type].super += toCents(person.superGoal);
     return {
       vendorId: person.vendorId,
       name: vendor.vendorName,
       type,
-      level: person.level,
+      level: person.level.trim(),
       goal: fromCents(toCents(person.goal)),
-      superGoal: person.superGoal ?? null,
+      superGoal: fromCents(toCents(person.superGoal)),
       blackGoal: person.blackGoal ?? null,
-      weeks: person.weeks.map((value) => fromCents(toCents(value))),
     };
   });
+  if (totals.farm.goal + totals.sales.goal <= 0) throw ValidationError("A meta do setor precisa ser maior que zero");
+
+  const config = {
+    segment,
+    farmGoal: fromCents(totals.farm.goal),
+    salesGoal: fromCents(totals.sales.goal),
+    farmSuper: fromCents(totals.farm.super),
+    salesSuper: fromCents(totals.sales.super),
+    superPercent: null,
+    farmBlack: data.farmBlack ?? 0,
+  };
 
   const black = blackInfo(month, await CampaignService.findAll());
   const isBlackMonth = black.active;
   const sectorBlack = black.sectorGoals[segment];
+  const withBlack = isBlackMonth ? withSectorBlack(config, black) : config;
+  const byType = typeTiers(withBlack, isBlackMonth);
+  const blackOf = new Map(people.map((person) => [person.vendorId, null]));
+
   if (isBlackMonth) {
     if (sectorBlack <= 0) {
       throw ValidationError(`A Meta ${segment.toUpperCase()} da campanha ${black.campaign.name} não está cadastrada (Campanhas)`);
@@ -181,81 +218,58 @@ exports.saveMonth = async (month, segment, data, updatedBy) => {
     if (toCents(data.farmBlack ?? 0) > toCents(sectorBlack)) {
       throw ValidationError(`A Meta black Farmer passa da Meta black do setor (${money(sectorBlack)})`);
     }
-    const byType = typeTiers(withSectorBlack({ ...data, segment }, black), true);
     for (const type of ["farm", "sales"]) {
       const tiers = byType[type];
       if (tiers.goal > 0 && !(tiers.black > tiers.super)) {
-        throw ValidationError(
-          `${TYPE_LABELS[type]}: a Meta black precisa ser maior que a Super meta (${money(tiers.super)})`,
-        );
+        throw ValidationError(`${TYPE_LABELS[type]}: a Meta black precisa ser maior que a Super meta (${money(tiers.super)})`);
       }
     }
-  }
 
-  const parts = segmentParts(data);
-  for (const type of ["farm", "sales"]) {
-    if (totals[type] !== toCents(parts[type])) {
-      throw ValidationError(
-        `${TYPE_LABELS[type]}: distribuído ${money(fromCents(totals[type]))} de ${money(parts[type])}`,
-      );
+    // Black de cada pessoa: a que veio ou, sem valor, a parte proporcional à Meta
+    const fallback = peopleTiers(
+      people.map((person) => ({ ...person, blackGoal: null })),
+      byType,
+    );
+    for (const person of people) {
+      const own = fromCents(toCents(person.blackGoal ?? fallback.get(person.vendorId).black));
+      if (toCents(own) < toCents(person.superGoal)) {
+        throw ValidationError(`A Meta black de ${person.name} não pode ser menor que a Super meta (${money(person.superGoal)})`);
+      }
+      blackOf.set(person.vendorId, own);
     }
-  }
-
-  // Super e Black de cada pessoa: a que o gestor mandou ou, sem valor, a parte proporcional à Meta.
-  // A soma de cada parte precisa dar a Super/Black da parte, e a pessoa não pode ter Super menor que a Meta
-  // nem Black menor que a Super
-  const byType = typeTiers(isBlackMonth ? withSectorBlack({ ...data, segment }, black) : data, isBlackMonth);
-  const tiers = ["super", ...(isBlackMonth ? ["black"] : [])];
-  const fallback = peopleTiers(
-    people.map((person) => ({ ...person, superGoal: null, blackGoal: null })),
-    byType,
-  );
-  const tiersOf = new Map(
-    people.map((person) => {
-      const base = fallback.get(person.vendorId);
-      return [
-        person.vendorId,
-        {
-          super: fromCents(toCents(person.superGoal ?? base.super)),
-          black: isBlackMonth ? fromCents(toCents(person.blackGoal ?? base.black)) : null,
-        },
-      ];
-    }),
-  );
-  for (const person of people) {
-    const own = tiersOf.get(person.vendorId);
-    if (toCents(own.super) < toCents(person.goal)) {
-      throw ValidationError(`A Super meta de ${person.name} não pode ser menor que a Meta do mês (${money(person.goal)})`);
-    }
-    if (isBlackMonth && toCents(own.black) < toCents(own.super)) {
-      throw ValidationError(`A Meta black de ${person.name} não pode ser menor que a Super meta (${money(own.super)})`);
-    }
-  }
-  for (const tier of tiers) {
     for (const type of ["farm", "sales"]) {
       const sum = people
         .filter((person) => person.type === type)
-        .reduce((total, person) => total + toCents(tiersOf.get(person.vendorId)[tier]), 0);
-      if (sum !== toCents(byType[type][tier])) {
+        .reduce((total, person) => total + toCents(blackOf.get(person.vendorId)), 0);
+      if (sum !== toCents(byType[type].black)) {
         throw ValidationError(
-          `${TIER_LABELS[tier]} ${TYPE_LABELS[type]}: distribuído ${money(fromCents(sum))} de ${money(byType[type][tier])}`,
+          `${TIER_LABELS.black} ${TYPE_LABELS[type]}: distribuído ${money(fromCents(sum))} de ${money(byType[type].black)}`,
         );
       }
     }
   }
 
   const saved = await MonthlyGoalRepository.upsert(month, segment, {
-    farmGoal: fromCents(toCents(data.farmGoal)),
-    salesGoal: fromCents(toCents(data.salesGoal)),
-    superPercent: data.superPercent,
-    farmBlack: isBlackMonth ? withSectorBlack({ ...data, segment }, black).farmBlack : null,
-    salesBlack: isBlackMonth ? withSectorBlack({ ...data, segment }, black).salesBlack : null,
-    levels: data.levels.map(({ key, name, weight }) => ({ key: key.trim(), name: name.trim(), weight })),
-    people: people.map(({ name, ...person }) => ({
-      ...person,
-      superGoal: tiersOf.get(person.vendorId).super,
-      blackGoal: tiersOf.get(person.vendorId).black,
+    farmGoal: config.farmGoal,
+    salesGoal: config.salesGoal,
+    farmSuper: config.farmSuper,
+    salesSuper: config.salesSuper,
+    superPercent: null,
+    farmBlack: isBlackMonth ? withBlack.farmBlack : null,
+    salesBlack: isBlackMonth ? withBlack.salesBlack : null,
+    tickets: { farm: data.tickets?.farm ?? null, sales: data.tickets?.sales ?? null },
+    conversion: { farm: data.conversion?.farm ?? null, sales: data.conversion?.sales ?? null },
+    levels: data.levels.map((level) => ({
+      key: level.key.trim(),
+      name: level.name.trim(),
+      type: level.type,
+      goal: fromCents(toCents(level.goal)),
+      superGoal: fromCents(toCents(level.superGoal)),
+      anticipation: level.anticipation,
+      upsell: level.upsell,
+      churn: level.churn,
     })),
+    people: people.map(({ name, ...person }) => ({ ...person, blackGoal: blackOf.get(person.vendorId), weeks: [] })),
     updatedBy,
   });
   return toConfig(saved);
@@ -312,10 +326,17 @@ exports.getProgress = async (month, now = new Date()) => {
   const sumRange = (daily, start, end) =>
     days.reduce((sum, day, index) => (day >= start && day <= end ? sum + daily[index] : sum), 0);
 
-  const progressOf = (realized, tiers, start, end) => ({
-    ...tierProgress(realized, tiers),
-    pace: paceOf({ realized, goal: tiers.goal, start, end, today }),
-  });
+  // ticket: o ticket médio do tipo da pessoa; com ele vem quantas vendas faltam para a faixa atual e, com a
+  // taxa de conversão (%), quantos leads: o que falta ÷ (ticket × conversão), como na planilha de vendas
+  const progressOf = (realized, tiers, start, end, ticket = null, conversion = null) => {
+    const progress = tierProgress(realized, tiers);
+    return {
+      ...progress,
+      pace: paceOf({ realized, goal: tiers.goal, start, end, today }),
+      ...(ticket > 0 && { salesNeeded: Math.ceil(progress.remaining / ticket) }),
+      ...(ticket > 0 && conversion > 0 && { leadsNeeded: Math.ceil(progress.remaining / ((ticket * conversion) / 100)) }),
+    };
+  };
   const forecastOf = (dailyCents, tiers, segment) =>
     monthForecast({ days, dailyCents, tiers, today, model: forecastModelOf(segment) });
   const sumDaily = (list) => days.map((_, index) => list.reduce((sum, daily) => sum + daily[index], 0));
@@ -325,7 +346,8 @@ exports.getProgress = async (month, now = new Date()) => {
   const people = [];
   const segments = [];
   for (const config of configs) {
-    const levelNames = new Map(config.levels.map((level) => [level.key, level.name]));
+    const levelOf = (type, key) =>
+      config.levels.find((level) => level.key === key && (!level.type || level.type === type)) ?? null;
     const byType = typeTiers(black.active ? withSectorBlack(config, black) : config, black.active);
     const tiers = segmentTiers(byType);
     const tiersByPerson = peopleTiers(config.people, byType);
@@ -335,8 +357,11 @@ exports.getProgress = async (month, now = new Date()) => {
       const daily = dailyByKey.get(`${vendorId}-${person.type}`) ?? new Array(days.length).fill(0);
       const realized = fromCents(daily.reduce((sum, value) => sum + value, 0));
       const personTiers = tiersByPerson.get(vendorId);
-      const personWeekTiers = weekTiers(personTiers, weeks.map((_, index) => person.weeks[index] ?? 0));
+      const personWeekTiers = dynamicWeekTiers({ personTiers, daily, days, weeks, today });
       const team = vendor?.teamId ? teamsById.get(String(vendor.teamId)) : null;
+      const level = levelOf(person.type, person.level);
+      const ticket = config.tickets?.[person.type] ?? null;
+      const conversion = config.conversion?.[person.type] ?? null;
 
       return {
         vendorId,
@@ -348,14 +373,28 @@ exports.getProgress = async (month, now = new Date()) => {
         teamId: vendor?.teamId ? String(vendor.teamId) : null,
         teamName: team?.name ?? null,
         level: person.level,
-        levelName: levelNames.get(person.level) ?? person.level,
-        month: progressOf(realized, personTiers, first, last),
+        levelName: level?.name ?? person.level,
+        ticket,
+        conversion,
+        // Divisão da meta do mês por origem (% do nível): antecipação, up-sell e churn
+        origins: level?.type
+          ? Object.fromEntries(
+              ["anticipation", "upsell", "churn"].map((key) => [
+                key,
+                {
+                  percent: level[key] ?? 0,
+                  value: fromCents(Math.round((toCents(personTiers.goal) * (level[key] ?? 0)) / 100)),
+                },
+              ]),
+            )
+          : null,
+        month: progressOf(realized, personTiers, first, last, ticket, conversion),
         forecast: forecastOf(daily, personTiers, config.segment),
         weeks: weeks.map((week, index) => ({
           index,
           start: week.start,
           end: week.end,
-          ...progressOf(fromCents(sumRange(daily, week.start, week.end)), personWeekTiers[index], week.start, week.end),
+          ...progressOf(fromCents(sumRange(daily, week.start, week.end)), personWeekTiers[index], week.start, week.end, ticket, conversion),
         })),
         daily,
       };
@@ -371,7 +410,7 @@ exports.getProgress = async (month, now = new Date()) => {
     segments.push({
       segment: config.segment,
       goal: tiers.goal,
-      superPercent: config.superPercent,
+      superPercent: config.superPercent ?? null,
       parts: Object.fromEntries(
         ["farm", "sales"].map((type) => [
           type,

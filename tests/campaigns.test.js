@@ -313,13 +313,13 @@ describe("Campanhas", () => {
       await Vendors.updateOne({ _id: seed.vendorA1._id }, { job: "B2B Venda" });
       await Vendors.updateOne({ _id: seed.vendorA2._id }, { job: "B2B Farmer" });
       const res = await request("PUT", `/goals/${MONTH}/b2b`, tokens.admin, {
-        farmGoal: 6000,
-        salesGoal: 4000,
-        superPercent: 120,
-        levels: [{ key: "jr", name: "Júnior", weight: 1 }],
+        levels: [
+          { key: "jr", name: "Júnior", type: "sales", goal: 4000, superGoal: 4800 },
+          { key: "jr", name: "Júnior", type: "farm", goal: 6000, superGoal: 7200 },
+        ],
         people: [
-          { vendorId: String(seed.vendorA1._id), level: "jr", goal: 4000, weeks: [1000, 1000, 1000, 1000] },
-          { vendorId: String(seed.vendorA2._id), level: "jr", goal: 6000, weeks: [1500, 1500, 1500, 1500] },
+          { vendorId: String(seed.vendorA1._id), level: "jr", goal: 4000, superGoal: 4800 },
+          { vendorId: String(seed.vendorA2._id), level: "jr", goal: 6000, superGoal: 7200 },
         ],
       });
       assert.equal(res.status, 200);

@@ -4,13 +4,17 @@
 // - a semana vai de segunda a domingo e pertence ao mês da segunda-feira;
 // - o mês da meta são as semanas que começam nele (soma das semanas = mês);
 // - valores em reais, comparados em centavos para a soma sempre fechar;
-// - o gestor define cada parte do setor em R$: Meta de renovação (Farmer) e de vendas, e no mês da
-//   campanha a Meta black de cada uma. A Super de cada parte é a Meta dela × superPercent%;
-// - Super e Black descem para as pessoas da parte na proporção da Meta de cada uma (que vem dos pesos
-//   de senioridade) e para as semanas na proporção da Meta de cada semana.
+// - modelo de níveis (planilha do comercial): cada setor tem, para Farmer e para Venda, níveis com Meta e
+//   Super em R$; a pessoa recebe as do nível dela (o gestor pode ajustar à mão) e a parte do setor é a soma
+//   das pessoas. No mês da campanha com Meta black, a Black de cada parte desce para as pessoas na
+//   proporção da Meta de cada uma;
+// - meses salvos no modelo antigo (pesos e superPercent) continuam com as metas salvas de cada pessoa;
+// - a meta da semana é recalculada no começo de cada semana: o que falta para a faixa do mês ÷ semanas que
+//   faltam; "quanto precisa por dia" conta só os dias úteis (segunda a sexta, sem feriados).
 
 const { forecastModelOf } = require("../../../config/forecastModels");
-const { isProductiveDay, normalCdf } = require("../../analytics/service/forecastCalculator");
+const { normalCdf } = require("../../analytics/service/forecastCalculator");
+const { HOLIDAYS } = require("../../../config/campaign");
 
 const SAO_PAULO_OFFSET_MS = 3 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -22,6 +26,21 @@ const dayKeyOf = (date) => new Date(new Date(date).getTime() - SAO_PAULO_OFFSET_
 const addDays = (day, amount) => new Date(new Date(`${day}T00:00:00Z`).getTime() + amount * DAY_MS).toISOString().slice(0, 10);
 
 const daysBetween = (from, to) => Math.round((new Date(`${to}T00:00:00Z`) - new Date(`${from}T00:00:00Z`)) / DAY_MS);
+
+// Dia útil das metas do mês: segunda a sexta, sem feriados (venda no fim de semana conta no dia útil anterior)
+const isWorkday = (day) => {
+  const weekDay = new Date(`${day}T00:00:00Z`).getUTCDay();
+  return weekDay >= 1 && weekDay <= 5 && !HOLIDAYS.includes(day);
+};
+
+// Dias úteis de from a to (os dois inclusos)
+const workdaysBetween = (from, to) => {
+  let count = 0;
+  for (let day = from; day <= to; day = addDays(day, 1)) {
+    if (isWorkday(day)) count += 1;
+  }
+  return count;
+};
 
 // Meia-noite de São Paulo do dia (AAAA-MM-DD) em UTC
 const startOfDay = (day) => new Date(`${day}T03:00:00.000Z`);
@@ -84,16 +103,21 @@ const segmentParts = ({ farmGoal, salesGoal }) => ({
   sales: fromCents(toCents(salesGoal)),
 });
 
-// Faixas de cada parte: Meta digitada, Super = Meta × superPercent% e Black digitada (só no mês da campanha)
+// Faixas de cada parte: a Meta (soma das pessoas), a Super (no modelo de níveis, a soma das Supers das pessoas,
+// em farmSuper/salesSuper; no modelo antigo, Meta × superPercent%) e a Black (só no mês da campanha)
 const typeTiers = (config, withBlack = false) => {
   const parts = segmentParts(config);
   const black = { farm: withBlack ? config.farmBlack ?? 0 : 0, sales: withBlack ? config.salesBlack ?? 0 : 0 };
+  const superOf = (type) =>
+    config[`${type}Super`] != null
+      ? fromCents(toCents(config[`${type}Super`]))
+      : fromCents(Math.round((toCents(parts[type]) * (config.superPercent ?? 0)) / 100));
   return Object.fromEntries(
     TYPES.map((type) => [
       type,
       {
         goal: parts[type],
-        super: fromCents(Math.round((toCents(parts[type]) * config.superPercent) / 100)),
+        super: superOf(type),
         black: fromCents(toCents(black[type])),
       },
     ]),
@@ -148,6 +172,22 @@ const weekTiers = (personTiers, weekGoals) => {
   }));
 };
 
+// Meta da semana recalculada (como a planilha): no começo de cada semana, o que falta para cada faixa do mês
+// ÷ semanas que faltam (inclusive ela). Semana que ainda não começou usa o vendido até hoje.
+// daily: centavos de cada dia de days (dias do mês da meta)
+const dynamicWeekTiers = ({ personTiers, daily, days, weeks, today }) =>
+  weeks.map((week, index) => {
+    const cutoff = week.start <= today ? week.start : addDays(today, 1);
+    const before = days.reduce((sum, day, dayIndex) => (day < cutoff ? sum + daily[dayIndex] : sum), 0);
+    const left = weeks.length - index;
+    return Object.fromEntries(
+      TIERS.map((tier) => {
+        const target = toCents(personTiers[tier] ?? 0);
+        return [tier, target > 0 ? fromCents(Math.round(Math.max(target - before, 0) / left)) : 0];
+      }),
+    );
+  });
+
 const sumTiers = (list) =>
   list.reduce(
     (sum, tiers) => ({
@@ -182,11 +222,14 @@ const tierProgress = (realized, tiers) => {
   };
 };
 
-// Ritmo em relação à Meta (a faixa normal), de start a end (dias AAAA-MM-DD), olhando o dia de hoje
+// Ritmo em relação à Meta (a faixa normal), de start a end (dias AAAA-MM-DD), olhando o dia de hoje.
+// Conta só os dias úteis (segunda a sexta). elapsedDays inclui hoje; daysToGo (para "quanto precisa por dia")
+// também inclui hoje, porque o dia ainda não acabou
 const paceOf = ({ realized, goal, start, end, today }) => {
-  const totalDays = daysBetween(start, end) + 1;
-  const elapsedDays = today < start ? 0 : today > end ? totalDays : daysBetween(start, today) + 1;
+  const totalDays = Math.max(workdaysBetween(start, end), 1);
+  const elapsedDays = today < start ? 0 : today > end ? totalDays : workdaysBetween(start, today);
   const remainingDays = totalDays - elapsedDays;
+  const daysToGo = today > end ? 0 : workdaysBetween(today < start ? start : today, end);
   const expected = fromCents(Math.round((toCents(goal) * elapsedDays) / totalDays));
   const missing = Math.max(toCents(goal) - toCents(realized), 0);
 
@@ -201,7 +244,8 @@ const paceOf = ({ realized, goal, start, end, today }) => {
     remainingDays,
     expected,
     status,
-    neededPerDay: remainingDays > 0 ? fromCents(Math.ceil(missing / remainingDays)) : fromCents(missing),
+    daysToGo,
+    neededPerDay: daysToGo > 0 ? fromCents(Math.ceil(missing / daysToGo)) : fromCents(missing),
     projection: elapsedDays > 0 ? fromCents(Math.round((toCents(realized) / elapsedDays) * totalDays)) : 0,
   };
 };
@@ -226,7 +270,7 @@ const chanceOf = ({ realized, target, realistic, stdDev, daysLeft }) => {
 };
 
 // Forecast do mês da meta no mesmo modelo do forecast da campanha (/analytics/forecast): dias produtivos
-// (segunda a sábado, sem feriado), venda em domingo ou feriado no dia produtivo anterior, hoje conta como
+// (nas metas do mês: segunda a sexta, sem feriado), venda no fim de semana ou feriado no dia útil anterior, hoje conta como
 // dia que passou, ritmo = média dos últimos 7 dias produtivos × 50% + dos últimos 30 × 30% + do mês × 20%
 // (pesos do modelo do setor, config/forecastModels.js), cenários com os fatores do modelo e a chance de bater
 // cada faixa pela normal. dailyCents: centavos de cada dia de `days` (dias do mês da meta)
@@ -250,7 +294,7 @@ const tierForecastsOf = ({ realized, pace, realistic, stdDev, daysLeft, tiers })
 
 const monthForecast = ({ days, dailyCents, tiers, today, model = forecastModelOf("b2b") }) => {
   const { paceWeights: PACE_WEIGHTS, scenarioFactors: SCENARIO_FACTORS } = model;
-  const productive = days.filter(isProductiveDay);
+  const productive = days.filter(isWorkday);
   const elapsed = productive.filter((day) => day <= today);
   const remaining = productive.filter((day) => day > today);
 
@@ -281,7 +325,7 @@ const monthForecast = ({ days, dailyCents, tiers, today, model = forecastModelOf
     let count = 0;
     return days.map((day) => {
       if (day < today) return null;
-      if (day > today && isProductiveDay(day)) count += 1;
+      if (day > today && isWorkday(day)) count += 1;
       return roundMoney(realized + pace * factor * count);
     });
   };
@@ -354,7 +398,10 @@ module.exports = {
   segmentTiers,
   peopleTiers,
   weekTiers,
+  dynamicWeekTiers,
   sumTiers,
+  isWorkday,
+  workdaysBetween,
   tierProgress,
   paceOf,
 };
