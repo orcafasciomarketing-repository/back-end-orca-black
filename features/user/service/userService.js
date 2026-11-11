@@ -116,6 +116,12 @@ exports.deleteUser = async (id, currentUserId) => {
   await RefreshTokenService.revokeAllTokens(id);
 };
 
+// Regrava a mesma senha com o custo atual do bcrypt (login de senha gravada com custo maior).
+// Não mexe nas sessões: é a mesma senha
+exports.rehashPassword = async (id, password) => {
+  await User.updateUser(id, { passwordHash: await hashPassword(password) });
+};
+
 // Troca da própria senha (POST /auth/change-password): grava e derruba todas as sessões abertas
 exports.changeOwnPassword = async (id, password) => {
   await User.updateUser(id, { passwordHash: await hashPassword(password) });

@@ -49,6 +49,16 @@ exports.loginUser = async (userData) => {
     throw UnauthorizedError();
   }
 
+  // Senha gravada com o custo antigo (lento): regrava com o atual, para os próximos logins serem rápidos.
+  // Se não conseguir gravar, o login continua (tenta de novo no próximo)
+  if (passwordService.needsRehash(userWithPassword.passwordHash)) {
+    try {
+      await UserService.rehashPassword(user._id, password);
+    } catch (error) {
+      console.error("Não foi possível regravar a senha com o custo novo", error);
+    }
+  }
+
   // Cada login é uma sessão nova; as outras sessões da conta (outro aparelho, outra pessoa) continuam
   const accessToken = AccessTokenService.generateAccessToken({ id: user._id, email: user.email });
   const refreshToken = await RefreshTokenService.createToken(user._id);

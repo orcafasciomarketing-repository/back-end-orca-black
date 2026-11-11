@@ -122,6 +122,7 @@ Não existe mais cadastro aberto (`/auth/register` foi removida → 404): quem c
 Autentica o usuário. Grava o cookie `refreshToken` (httpOnly). O `user` da resposta traz o `role` (`admin`, `b2b` ou `b2g`).
 
 - **Várias sessões por conta:** cada login abre uma sessão nova e **não derruba as outras** (outro aparelho, outra aba, outra pessoa usando a mesma conta). As sessões só caem ao sair (`/auth/logout`, só aquela), ao trocar a senha, ao mudar o perfil ou a senha pelo admin e ao excluir o usuário.
+- **Velocidade (custo da senha):** a senha é conferida pelo bcrypt, lento de propósito. O custo padrão agora é **10** (`ROUND_ENCRYPTION` troca; antes o padrão era 15, ~50 s por login no Render gratuito, contra ~1,5 s com 10). Senha gravada com custo maior que o atual é **regravada com o custo atual no primeiro login certo** (mesma senha, sem derrubar sessões): só esse primeiro login ainda demora. Se não conseguir regravar, o login continua e tenta de novo no próximo.
 - **Limite de tentativas erradas:** 10 respostas `401` a cada 15 minutos por IP + e-mail; a 11ª tentativa recebe `429` ("Muitas tentativas de login…"), mesmo com a senha certa, até a janela passar. Um login certo zera a contagem. Como conta por e-mail, várias pessoas do mesmo escritório (mesmo IP) não se bloqueiam.
 
 **Body** (validado por `LoginSchema`, não aceita campos extras):
