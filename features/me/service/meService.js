@@ -4,6 +4,7 @@ const TeamsService = require("../../teams/service/teamsService");
 const SalesService = require("../../sale/service/salesService");
 const AnalyticsService = require("../../analytics/service/analyticsService");
 const PrizeService = require("../../prizes/service/prizeService");
+const MonthlyGoalService = require("../../goals/service/monthlyGoalService");
 const { buildPrizeBalance } = require("../../prizes/service/prizeCalculator");
 const { PRIZE_POINTS_STEP } = require("../../../config/prizes");
 const { NotFoundError } = require("../../../shared/errors");
@@ -101,5 +102,31 @@ exports.getPrizes = async (user) => {
     withdrawn: balance.withdrawn,
     balance: balance.balance,
     pointsToNext: balance.pointsToNext,
+  };
+};
+
+// Metas do mês do próprio vendedor (a mesma conta da tela "Metas por vendedor" do admin, só com a parte dele):
+// as faixas, o realizado, o ritmo, a previsão, cada semana e o histórico dos meses.
+// Sem meta cadastrada para ele no mês (ou pessoa de passagem), person vem null
+exports.getGoals = async (user, month) => {
+  const person = await findPerson(user);
+  const [progress, history] = await Promise.all([
+    MonthlyGoalService.getProgress(month),
+    MonthlyGoalService.getHistory(month),
+  ]);
+  const myId = String(person.id);
+  const mine = (people) => people.filter((item) => person.kind === "vendor" && String(item.vendorId) === myId);
+
+  return {
+    month: progress.month,
+    today: progress.today,
+    weeks: progress.weeks,
+    days: progress.days,
+    black: progress.black,
+    person: mine(progress.people)[0] ?? null,
+    history: {
+      month: history.month,
+      months: history.months.map((item) => ({ month: item.month, start: item.start, end: item.end, people: mine(item.people) })),
+    },
   };
 };

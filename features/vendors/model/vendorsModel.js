@@ -31,4 +31,7 @@ const VendorSchema = new Schema(
   { timestamps: true },
 );
 
+// Gravar aqui limpa o cache dos resultados das contas (shared/resultCache.js)
+require("../../../shared/resultCache").invalidateOnWrite(VendorSchema);
+
 module.exports = model("Vendors", VendorSchema);

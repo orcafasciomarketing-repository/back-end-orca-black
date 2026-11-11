@@ -13,6 +13,7 @@ const userRoutes = require("./features/user/routes/userRoutes");
 const meRoutes = require("./features/me/routes/meRoutes");
 const prizeRoutes = require("./features/prizes/routes/prizeRoutes");
 const monthlyGoalRoutes = require("./features/goals/routes/monthlyGoalRoutes");
+const campaignRoutes = require("./features/campaigns/routes/campaignRoutes");
 
 const app = express();
 
@@ -71,6 +72,7 @@ app.use("/users", userRoutes);
 app.use("/me", meRoutes);
 app.use("/prizes", prizeRoutes);
 app.use("/goals", monthlyGoalRoutes);
+app.use("/campaigns", campaignRoutes);
 
 // Erro esperado (validação, 401, 403, 404...) devolve a mensagem dele. Erro inesperado (500) fica só no log
 // do servidor: a resposta não mostra detalhes internos (banco, código)

@@ -24,4 +24,7 @@ const sdrSchema = new Schema(
   { timestamps: true },
 );
 
+// Gravar aqui limpa o cache dos resultados das contas (shared/resultCache.js)
+require("../../../shared/resultCache").invalidateOnWrite(sdrSchema);
+
 module.exports = model("SDR", sdrSchema);

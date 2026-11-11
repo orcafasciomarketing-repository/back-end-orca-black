@@ -45,6 +45,11 @@ Erros passam pelo handler global e retornam `{ "error": "mensagem" }` com o stat
 | GET | `/me/sales` | **Só vendor e sdr** | — | `getSales` → `getSales` |
 | GET | `/me/team` | **Só vendor e sdr** | query `period` | `getTeam` → `getTeam` |
 | GET | `/me/prizes` | **Só vendor e sdr** | — | `getPrizes` → `getPrizes` |
+| GET | `/me/goals` | **Só vendor e sdr** | query `month` | `getGoals` → `getGoals` |
+| GET | `/campaigns` | **Privada** (master, admin, b2b, b2g) | — | `list` → `list` |
+| POST | `/campaigns` | **Master e admin** | body | `create` → `create` |
+| PUT | `/campaigns/:id` | **Master e admin** | path `id`, body | `update` → `update` |
+| DELETE | `/campaigns/:id` | **Master e admin** | path `id` | `remove` → `remove` |
 | GET | `/goals/:month` | **Master e admin** | path `month` (AAAA-MM) | `getMonth` → `getMonth` |
 | GET | `/goals/:month/progress` | **Master e admin** | path `month` | `getProgress` → `getProgress` |
 | GET | `/goals/:month/history` | **Master e admin** | path `month`, query `months` | `getHistory` → `getHistory` |
@@ -53,6 +58,8 @@ Erros passam pelo handler global e retornam `{ "error": "mensagem" }` com o stat
 | GET | `/public/*` | Pública (arquivos estáticos) | path do arquivo | — |
 
 **Rotas públicas** são as usadas pelas telas (TVs), que não fazem login. **Rotas privadas** são do admin.
+
+**Campanha (`?campaign=<id>`):** as rotas de `/analytics` (menos o forecast com `?month=`), `/prizes`, `/prizes/withdrawals` (inclusive o `POST`), `/sales/admin` e `/sales/get/:vendorId` aceitam `?campaign=<id>` e fazem as contas só com as vendas do período dessa campanha (e, nos prêmios, só com as retiradas dela). **Sem o parâmetro, vale a campanha ativa** (as TVs e a área dos colaboradores nunca mandam). Id inválido → `400`; campanha que não existe → `404`. Ver "Campanhas — `/campaigns`".
 
 ## Autenticação
 
@@ -93,7 +100,10 @@ O middleware busca o usuário no banco a cada requisição: o perfil vem do banc
 - **Cabeçalhos:** toda resposta leva `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` e `Referrer-Policy: no-referrer`; o `X-Powered-By` foi desligado.
 - **Erros:** erro esperado (400, 401, 403, 404, 409, 429) devolve a mensagem dele. Erro inesperado (500) devolve só `{ "error": "Erro interno do servidor" }` e o detalhe vai para o log do servidor.
 - **Cache curto das vendas ativas** ([shared/activeSalesCache.js](shared/activeSalesCache.js)): quando chega uma venda, todas as telas abertas recarregam juntas; as buscas iguais de vendas ativas dentro de 5 segundos viram uma só. Qualquer gravação em vendas (nova, cancelada, importada, apagada) limpa o cache na hora, então nenhuma tela vê dado velho.
+- **Cache curto dos resultados das contas** ([shared/resultCache.js](shared/resultCache.js)): placar, rankings, pontos por pessoa, histórico de pontos, forecast, meta e o resumo dos prêmios (que alimenta `/prizes` e `/me/prizes`, e os pontos de `/me/team`) são calculados uma vez e reaproveitados por 5 segundos para todo mundo que pedir a mesma coisa (mesmos parâmetros). Enquanto uma conta roda, quem chega espera por ela em vez de começar outra, e o prazo só conta depois que ela termina. O progresso e o histórico das metas do mês (que alimentam `/goals` e `/me/goals`) e a lista e a campanha ativa também. Qualquer gravação em vendas, vendedores, passagens, times, retiradas de prêmio, metas ou campanhas limpa o cache na hora (ganchos nos models com `invalidateOnWrite`), então ninguém vê dado velho depois de uma mudança.
+- **Leitura leve (`.lean()`)** nas buscas de vendas: as vendas ativas para as contas e as listas de vendas (`/sales/admin`, `/sales/get`, `/sales/get/:vendorId`, `/me/sales`) vêm como objetos simples, sem montar documentos do Mongoose. O JSON das respostas não muda.
 - **Índices em vendas:** `{ dealStatus, realizedAt }` e `{ vendorId }`.
+- **Teste de carga** (11/11/2026, local, backend limitado a 0,1 CPU e 512 MB como o Render gratuito, 3.000 vendas, 60 vendedores; todos os vendedores com a Minha área aberta + 5 TVs atualizando juntos quando entra uma venda; tempo até a tela de todos atualizar): antes das melhorias, 1 vendedor 17 s, 5 vendedores 28 s e 10 vendedores 54 s; depois, 1 vendedor 3 s, 5 vendedores 7 s, 10 vendedores 11 s, 20 vendedores 15 s, 40 vendedores 25 s e 60 vendedores 34 s, quase sem erros. O banco do teste era local; com o MongoDB na nuvem soma o tempo de rede.
 
 ## CORS
 
@@ -441,7 +451,7 @@ Retorna a meta da Black Friday e o progresso, já calculado. Sem parâmetros. O 
 
 | Campo | Descrição |
 |---|---|
-| `goal` | Meta total. Com `BLACK_FRIDAY_GOAL_B2B` e `BLACK_FRIDAY_GOAL_B2G` configuradas, é a soma das duas; sem elas, a `BLACK_FRIDAY_GOAL`. |
+| `goal` | Meta total da campanha (a cadastrada em `/campaigns`; na primeira campanha, a do `.env`). |
 | `total` | Soma do valor de todas as vendas ativas. |
 | `percent` | `total / goal × 100`, com 2 casas decimais. Pode passar de 100 se a meta for batida. Meta não configurada → `0`. |
 | `segments` | Meta, total e percentual de cada setor (filtros B2B/B2G do admin). Meta do setor não configurada → `goal: 0` e `percent: 0` (o front usa a meta total). A TV só usa `goal`, `total` e `percent`. |
@@ -536,7 +546,7 @@ Forecast da campanha e da semana atual (modelo do `forecast_automatico_crm.pdf`)
 - **Cenários** = vendido + ritmo × fator × dias restantes (pessimista 0,8; realista 1; otimista 1,2).
 - **Ritmo necessário** = (meta − vendido) ÷ dias restantes. **Cobertura** = ritmo ÷ necessário (não é a chance de bater a meta). **Gap** = meta − realista (negativo = acima da meta).
 - **Probabilidade** = 1 − Normal(z), com z = (meta − realista) ÷ (desvio padrão diário × √dias restantes). O desvio é dos últimos 30 dias produtivos. Com menos de 2 dias → `null`. Meta batida → 100; campanha encerrada sem bater → 0.
-- **Meta**: a do setor (`BLACK_FRIDAY_GOAL_B2B`/`_B2G`); sem ela, a total (`goalIsTotal: true`).
+- **Meta**: a do setor na campanha; sem ela (0), a total (`goalIsTotal: true`). O período (`campaign.start`/`end`) é o da campanha, e `period` traz `{ type: "campaign", campaignId, name }`.
 - **Semana**: segunda a sábado da semana atual (no máximo até 01/12), com os cenários em `week` (o formato de `week` não mudou).
 - **Meta semanal** (`weekGoal`, campo à parte para `week` continuar igual): automática. Pega o que faltava da meta **antes da segunda-feira** (vendas da própria semana não mexem nela) ÷ dias produtivos da segunda até 01/12 × dias produtivos da semana. Ex.: meta 200 mil, vendido 10 mil até domingo, 19 dias produtivos até o fim e 6 na semana → 190.000 ÷ 19 × 6 = 60 mil. Traz `goal`, `sold` (vendido na semana), `percent`, `remaining`, `productiveDays` (da semana) e `requiredPace` (o que falta ÷ dias produtivos depois de hoje na semana; `null` sem dias). `null` antes da campanha, depois dela ou sem meta. Com a meta já batida, `goal` é 0 e `percent` é `null`.
 
@@ -625,6 +635,53 @@ Pontos de **cada pessoa** (vendedores e pessoas de passagem), com o time de cada
   ]
 }
 ```
+
+---
+
+## Campanhas — `/campaigns`
+
+Cada campanha tem nome, início e fim (`AAAA-MM-DD`, horário de São Paulo), meta B2B e meta B2G (a meta total `goal` é a soma), `active` e `hasBlackTier`. Código em [features/campaigns](features/campaigns). Regras em RN-74 a RN-77.
+
+- **Vendas da campanha:** as vendas ativas com a data da venda (`realizedAt`) entre o início (00:00) e o fim (23:59:59.999) da campanha. A semana (`week`/`lastWeek`) fica limitada ao período da campanha.
+- **Ativa:** sempre uma só. É a das TVs, da área dos colaboradores e de quem não manda `?campaign=`. Marcar outra como ativa desmarca a anterior.
+- **Primeira campanha:** sem nenhuma campanha no banco (primeira subida depois da atualização), o backend cria a **"Campanha Black"** com as datas de [config/campaign.js](config/campaign.js) e as metas do `.env` (`BLACK_FRIDAY_GOAL_B2B/B2G`; a total é a `BLACK_FRIDAY_GOAL`), ativa e com Meta black. O período é estendido para cobrir a primeira e a última venda ativa que já estão no banco (os totais das TVs continuam iguais). Ela fica com `isDefault: true`, e as retiradas de prêmio sem campanha (gravadas antes) são dela.
+- Gravar, ativar ou excluir uma campanha manda o evento SSE `{ "type": "sale-updated" }`: as TVs e as telas abertas buscam os dados de novo.
+- Lista e campanha ativa ficam no cache de 5 segundos dos resultados (limpo a cada gravação em campanhas).
+
+### `GET /campaigns`
+
+Master, admin, b2b e b2g (para escolher a campanha nas telas). Vendor/sdr → `403`; sem login → `401`. A mais recente (pelo início) primeiro.
+
+```json
+[
+  {
+    "id": "6650...", "name": "Campanha Black", "start": "2026-11-03", "end": "2026-12-01",
+    "goals": { "b2b": 2000000, "b2g": 1000000 }, "goal": 3000000,
+    "active": true, "hasBlackTier": true, "isDefault": true,
+    "updatedBy": null, "updatedAt": "2026-11-11T12:00:00.000Z",
+    "sales": { "count": 128, "total": 941952 }
+  }
+]
+```
+
+`sales`: quantidade e soma das vendas ativas no período.
+
+### `POST /campaigns` e `PUT /campaigns/:id`
+
+Master e admin (b2b/b2g → `403`). Body:
+
+```json
+{ "name": "Março", "start": "2027-03-01", "end": "2027-03-31", "goals": { "b2b": 5000, "b2g": 2000 }, "active": false, "hasBlackTier": false }
+```
+
+- `name` obrigatório (até 80 caracteres); datas reais no formato `AAAA-MM-DD`, com fim ≥ início; metas ≥ 0; campo a mais → `400`.
+- `active: true` torna esta a ativa (e desmarca a anterior). No `PUT`, `active` ausente mantém como está; `active: false` na campanha ativa → `400` ("marque outra como ativa").
+- `hasBlackTier: true`: o mês em que a campanha começa ganha a Meta black nas metas mensais, com as metas de setor dela (ver `/goals`).
+- Resposta: a campanha salva (`201` no `POST`, `200` no `PUT`). Id inválido → `400`; inexistente → `404`.
+
+### `DELETE /campaigns/:id`
+
+Master e admin. A ativa → `409`; com retirada de prêmio registrada → `409`. As vendas não são apagadas (só deixam de ter essa campanha).
 
 ---
 
@@ -745,6 +802,22 @@ Os prêmios da própria pessoa, com o mesmo cálculo de `GET /prizes` (RN-66 e R
 - `withdrawn`: soma dos prêmios já retirados (registrados pelo master).
 - `earned` / `balance` / `pointsToNext`: direitos, saldo (pode ficar negativo) e quanto falta para o próximo prêmio.
 
+### `GET /me/goals`
+
+As metas do mês do próprio vendedor (tela "Minhas metas"). `?month=AAAA-MM` (sem ele, o mês atual em São Paulo; formato errado → `400`). Mesma conta de `GET /goals/:month/progress` e `/history`, só com a parte dele:
+
+```json
+{
+  "month": "2026-11", "today": "2026-11-11", "weeks": [...], "days": [...], "black": { "active": true, ... },
+  "person": { "vendorId": "...", "month": {...}, "forecast": {...}, "weeks": [...], "cumulative": [...] },
+  "history": { "month": "2026-11", "months": [{ "month": "2026-10", "start": "...", "end": "...", "people": [{ "vendorId": "...", "realized": 0, "tiers": null }] }] }
+}
+```
+
+- `person`: o mesmo objeto de uma pessoa em `progress.people` (faixas, realizado, ritmo, forecast com quanto precisa por dia e a chance de cada faixa, semanas e acumulado por dia). `null` se ele não tem meta no mês (e sempre `null` para pessoa de passagem).
+- `history.months[].people`: só ele (lista vazia se não estava no mês). Nenhum dado de outro vendedor vem na resposta.
+- Usa o mesmo cache de 5 segundos do progresso das metas: muitos vendedores abrindo juntos fazem a conta do mês uma vez só.
+
 ---
 
 ## Prêmios — `/prizes`
@@ -805,7 +878,7 @@ Exclui um lançamento errado; o saldo se recalcula. Retirada que não existe →
 
 ## Metas mensais — `/goals`
 
-Metas em R$ por setor, por vendedor e por semana, com três faixas: Meta, Super meta e Meta black (a black só no mês em que a campanha começa, `config/campaign.js`). O gestor define em R$ a Meta de Farmer (renovação) e a de Venda (o setor é a soma); a Super de cada parte é a Meta dela × `superPercent` (o único percentual). A Meta black do setor vem do `.env` (`BLACK_FRIDAY_GOAL_B2B/B2G`, a mesma das TVs): o gestor só diz quanto dela é de Farmer (`farmBlack`) e Venda fica com o resto. Depois, cada faixa da parte vai para as pessoas da parte na proporção da Meta de cada uma (que vem dos pesos de senioridade) e para as semanas na proporção da Meta semanal. Regras em RN-69 a RN-73. **Fase de teste com o gestor: só `master` e `admin`** (b2b, b2g, vendor e sdr → `403`; sem login → `401`). Não mexe na meta das TVs (`BLACK_FRIDAY_GOAL*` do `.env`). Mês fora do formato `AAAA-MM` ou setor diferente de `b2b`/`b2g` → `400`.
+Metas em R$ por setor, por vendedor e por semana, com três faixas: Meta, Super meta e Meta black (a black só no mês em que começa uma campanha marcada com Meta black, `hasBlackTier` em `/campaigns`). O gestor define em R$ a Meta de Farmer (renovação) e a de Venda (o setor é a soma); a Super de cada parte é a Meta dela × `superPercent` (o único percentual). A Meta black do setor é a meta do setor nessa campanha (a mesma das TVs): o gestor só diz quanto dela é de Farmer (`farmBlack`) e Venda fica com o resto. Depois, cada faixa da parte vai para as pessoas da parte na proporção da Meta de cada uma (que vem dos pesos de senioridade) e para as semanas na proporção da Meta semanal. Regras em RN-69 a RN-73. **Fase de teste com o gestor: só `master` e `admin`** (b2b, b2g, vendor e sdr → `403`; sem login → `401`). Não mexe na meta das TVs (`BLACK_FRIDAY_GOAL*` do `.env`). Mês fora do formato `AAAA-MM` ou setor diferente de `b2b`/`b2g` → `400`.
 
 ### `GET /goals/:month`
 
@@ -831,7 +904,7 @@ Para a tela de cadastro.
 ```
 
 - `weeks`: semanas (segunda a domingo) que **começam** no mês; a última pode terminar no mês seguinte.
-- `black.active`: o mês é o da campanha (tem Meta black). `sectorGoals`: a Meta black de cada setor do `.env` (`BLACK_FRIDAY_GOAL_B2B/B2G`, a mesma das TVs; `0` se não configurada). O `salesBlack` do `config` é só registro: o progresso sempre usa Black do setor do `.env` − `farmBlack`.
+- `black.active`: no mês começa uma campanha com Meta black. `black.campaign`: `{ id, name }` dela (ou `null`); `black.month`: o mês (ou `null`). `sectorGoals`: a meta de cada setor dessa campanha (`0` sem campanha ou sem meta). O `salesBlack` do `config` é só registro: o progresso sempre usa a Black do setor da campanha − `farmBlack`. Salvar o mês com Meta black e a campanha sem meta do setor → `400`.
 - `config`: o que está salvo (ou `null`). `previous`: sem `config`, o último mês salvo antes deste, para a tela copiar.
 - `vendors`: vendedores do setor pelo cargo (`"B2B ..."` / `"B2G ..."`); `type` = `farm` se o cargo tem "Farmer", senão `sales`.
 

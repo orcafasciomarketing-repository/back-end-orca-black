@@ -15,4 +15,7 @@ const TeamSchema = new Schema(
   { timestamps: true },
 );
 
+// Gravar aqui limpa o cache dos resultados das contas (shared/resultCache.js)
+require("../../../shared/resultCache").invalidateOnWrite(TeamSchema);
+
 module.exports = model("Teams", TeamSchema);

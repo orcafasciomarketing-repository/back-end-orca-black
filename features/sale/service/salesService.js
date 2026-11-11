@@ -35,12 +35,13 @@ const getWeekRange = (weeksAgo = 0) => {
   };
 };
 
-exports.findAll = async (page, limit, segment) => {
-  return await SalesRepository.findAll(page, limit, segment);
+// range: período da campanha ({ from, to }, datas do banco, ver campaignService.rangeOf). Sem ele, todas as vendas
+exports.findAll = async (page, limit, segment, range) => {
+  return await SalesRepository.findAll(page, limit, segment, range);
 };
 
-exports.findByVendor = async (vendorId, segment) => {
-  return await SalesRepository.findByVendor(vendorId, segment);
+exports.findByVendor = async (vendorId, segment, range) => {
+  return await SalesRepository.findByVendor(vendorId, segment, range);
 };
 
 exports.findBySdr = async (sdrId) => {
@@ -59,30 +60,43 @@ exports.findActiveByWeek = async (page, limit) => {
   );
 };
 
-// Soma do value de todas as vendas ativas da campanha (progresso da meta)
-exports.sumActiveValue = async () => {
-  return await SalesRepository.sumActiveValue();
+// Soma do value das vendas ativas da campanha (progresso da meta)
+exports.sumActiveValue = async (range) => {
+  return await SalesRepository.sumActiveValue(range);
 };
 
 // Total vendido (só ativas) de cada setor: { b2b: 1000, b2g: 500 }
-exports.sumActiveValueBySegment = async () => {
-  return await SalesRepository.sumActiveValueBySegment();
+exports.sumActiveValueBySegment = async (range) => {
+  return await SalesRepository.sumActiveValueBySegment(range);
 };
 
-// period: "week" (semana atual), "lastWeek" (semana passada) ou "all" (campanha toda)
+const cachedBetween = (from, to) =>
+  activeSalesCache.cached(`${new Date(from).getTime()}-${new Date(to).getTime()}`, () =>
+    SalesRepository.findActiveByRealizedAt(from, to),
+  );
+
+// Vendas ativas entre duas datas (do banco), com o mesmo cache curto
+exports.findActiveBetween = async (from, to) => {
+  return await cachedBetween(from, to);
+};
+
+// period: "week" (semana atual), "lastWeek" (semana passada) ou "all" (campanha toda).
+// range: o período da campanha; a semana fica limitada a ele (semana fora da campanha = nenhuma venda)
 // Com cache curto (shared/activeSalesCache.js): várias telas pedindo ao mesmo tempo fazem uma busca só
-exports.findActiveByPeriod = async (period) => {
+exports.findActiveByPeriod = async (period, range) => {
   if (period === "all") {
+    if (range) return await cachedBetween(range.from, range.to);
     return await activeSalesCache.cached("all", () => SalesRepository.findActiveByRealizedAt());
   }
 
   const { startOfWeek, finalOfWeek } = getWeekRange(
     period === "lastWeek" ? 1 : 0,
   );
+  const from = range && range.from > startOfWeek ? range.from : startOfWeek;
+  const to = range && range.to < finalOfWeek ? range.to : finalOfWeek;
+  if (from > to) return [];
 
-  return await activeSalesCache.cached(`${new Date(startOfWeek).getTime()}-${new Date(finalOfWeek).getTime()}`, () =>
-    SalesRepository.findActiveByRealizedAt(startOfWeek, finalOfWeek),
-  );
+  return await cachedBetween(from, to);
 };
 
 const toPopupPerson = (sdr) => ({

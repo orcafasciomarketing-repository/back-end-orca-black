@@ -4,8 +4,7 @@ const VendorsService = require("../../vendors/service/vendorsService");
 const TeamsService = require("../../teams/service/teamsService");
 const { segmentOfJob } = require("../../prizes/service/prizeService");
 const { ValidationError } = require("../../../shared/errors");
-const { BLACK_FRIDAY_GOAL, SEGMENT_GOALS } = require("../../../config/goal");
-const { CAMPAIGN_START_DAY } = require("../../../config/campaign");
+const CampaignService = require("../../campaigns/service/campaignService");
 const {
   dayKeyOf,
   addDays,
@@ -29,22 +28,25 @@ const { forecastModelOf } = require("../../../config/forecastModels");
 
 const SEGMENTS = ["b2b", "b2g"];
 
-// A Meta black só vale no mês em que a campanha começa. A de cada setor é a do .env
-// (BLACK_FRIDAY_GOAL_B2B/B2G, a mesma das TVs): o gestor só diz quanto dela é de Farmer, e Venda fica com o resto
-const BLACK_MONTH = CAMPAIGN_START_DAY.slice(0, 7);
+// A Meta black só vale no mês em que começa uma campanha marcada com Meta black (cadastro de campanhas).
+// A de cada setor é a meta do setor nessa campanha (a mesma das TVs): o gestor só diz quanto dela é de Farmer,
+// e Venda fica com o resto
+const blackInfo = (month, campaigns) => {
+  const campaign = CampaignService.blackCampaignOf(month, campaigns);
+  return {
+    month: campaign ? month : null,
+    active: Boolean(campaign),
+    campaign: campaign ? { id: campaign.id, name: campaign.name } : null,
+    total: campaign ? campaign.goal : 0,
+    sectorGoals: Object.fromEntries(
+      SEGMENTS.map((segment) => [segment, campaign && campaign.goals[segment] > 0 ? campaign.goals[segment] : 0]),
+    ),
+  };
+};
 
-const sectorBlackOf = (segment) => (SEGMENT_GOALS[segment] > 0 ? SEGMENT_GOALS[segment] : 0);
-
-const blackInfo = (month) => ({
-  month: BLACK_MONTH,
-  active: month === BLACK_MONTH,
-  total: BLACK_FRIDAY_GOAL,
-  sectorGoals: Object.fromEntries(SEGMENTS.map((segment) => [segment, sectorBlackOf(segment)])),
-});
-
-// Black de Venda = Black do setor (.env) − Black de Farmer, sempre com o valor atual do .env
-const withSectorBlack = (config) => {
-  const sector = sectorBlackOf(config.segment);
+// Black de Venda = Black do setor (campanha) − Black de Farmer, sempre com o valor atual da campanha
+const withSectorBlack = (config, black) => {
+  const sector = black.sectorGoals[config.segment] ?? 0;
   const farm = Math.min(toCents(config.farmBlack ?? 0), toCents(sector));
   return { ...config, farmBlack: fromCents(farm), salesBlack: fromCents(toCents(sector) - farm) };
 };
@@ -106,6 +108,7 @@ exports.getMonth = async (month) => {
     loadPeopleContext(),
   ]);
 
+  const campaigns = await CampaignService.findAll();
   const segments = {};
   for (const segment of SEGMENTS) {
     const config = configs.find((item) => item.segment === segment);
@@ -120,7 +123,7 @@ exports.getMonth = async (month) => {
     };
   }
 
-  return { month, weeks, black: blackInfo(month), segments };
+  return { month, weeks, black: blackInfo(month, campaigns), segments };
 };
 
 // Só salva quando tudo fecha: cada vendedor do setor uma vez, nível existente, soma das semanas = mensal
@@ -168,16 +171,17 @@ exports.saveMonth = async (month, segment, data, updatedBy) => {
     };
   });
 
-  const isBlackMonth = blackInfo(month).active;
-  const sectorBlack = sectorBlackOf(segment);
+  const black = blackInfo(month, await CampaignService.findAll());
+  const isBlackMonth = black.active;
+  const sectorBlack = black.sectorGoals[segment];
   if (isBlackMonth) {
     if (sectorBlack <= 0) {
-      throw ValidationError(`A Meta black do ${segment.toUpperCase()} não está configurada no backend (BLACK_FRIDAY_GOAL_${segment.toUpperCase()})`);
+      throw ValidationError(`A Meta ${segment.toUpperCase()} da campanha ${black.campaign.name} não está cadastrada (Campanhas)`);
     }
     if (toCents(data.farmBlack ?? 0) > toCents(sectorBlack)) {
       throw ValidationError(`A Meta black Farmer passa da Meta black do setor (${money(sectorBlack)})`);
     }
-    const byType = typeTiers(withSectorBlack({ ...data, segment }), true);
+    const byType = typeTiers(withSectorBlack({ ...data, segment }, black), true);
     for (const type of ["farm", "sales"]) {
       const tiers = byType[type];
       if (tiers.goal > 0 && !(tiers.black > tiers.super)) {
@@ -200,7 +204,7 @@ exports.saveMonth = async (month, segment, data, updatedBy) => {
   // Super e Black de cada pessoa: a que o gestor mandou ou, sem valor, a parte proporcional à Meta.
   // A soma de cada parte precisa dar a Super/Black da parte, e a pessoa não pode ter Super menor que a Meta
   // nem Black menor que a Super
-  const byType = typeTiers(isBlackMonth ? withSectorBlack({ ...data, segment }) : data, isBlackMonth);
+  const byType = typeTiers(isBlackMonth ? withSectorBlack({ ...data, segment }, black) : data, isBlackMonth);
   const tiers = ["super", ...(isBlackMonth ? ["black"] : [])];
   const fallback = peopleTiers(
     people.map((person) => ({ ...person, superGoal: null, blackGoal: null })),
@@ -244,8 +248,8 @@ exports.saveMonth = async (month, segment, data, updatedBy) => {
     farmGoal: fromCents(toCents(data.farmGoal)),
     salesGoal: fromCents(toCents(data.salesGoal)),
     superPercent: data.superPercent,
-    farmBlack: isBlackMonth ? withSectorBlack({ ...data, segment }).farmBlack : null,
-    salesBlack: isBlackMonth ? withSectorBlack({ ...data, segment }).salesBlack : null,
+    farmBlack: isBlackMonth ? withSectorBlack({ ...data, segment }, black).farmBlack : null,
+    salesBlack: isBlackMonth ? withSectorBlack({ ...data, segment }, black).salesBlack : null,
     levels: data.levels.map(({ key, name, weight }) => ({ key: key.trim(), name: name.trim(), weight })),
     people: people.map(({ name, ...person }) => ({
       ...person,
@@ -277,9 +281,10 @@ exports.getProgress = async (month, now = new Date()) => {
   const today = dayKeyOf(now);
   const weeks = monthWeeks(month);
   const days = monthDays(weeks);
-  const configs = (await MonthlyGoalRepository.findByMonth(month)).sort((a, b) => a.segment.localeCompare(b.segment));
+  const [found, campaigns] = await Promise.all([MonthlyGoalRepository.findByMonth(month), CampaignService.findAll()]);
+  const configs = [...found].sort((a, b) => a.segment.localeCompare(b.segment));
 
-  const empty = { month, today, weeks, days, black: blackInfo(month), total: null, segments: [], people: [], teams: [] };
+  const empty = { month, today, weeks, days, black: blackInfo(month, campaigns), total: null, segments: [], people: [], teams: [] };
   if (!configs.length || !weeks.length) {
     return { ...empty, summary: { people: 0, reachedGoal: 0, reachedSuper: 0, reachedBlack: 0, onPace: 0, behind: 0 } };
   }
@@ -316,12 +321,12 @@ exports.getProgress = async (month, now = new Date()) => {
   const sumDaily = (list) => days.map((_, index) => list.reduce((sum, daily) => sum + daily[index], 0));
   const allByType = { farm: [], sales: [] };
 
-  const black = blackInfo(month);
+  const black = blackInfo(month, campaigns);
   const people = [];
   const segments = [];
   for (const config of configs) {
     const levelNames = new Map(config.levels.map((level) => [level.key, level.name]));
-    const byType = typeTiers(black.active ? withSectorBlack(config) : config, black.active);
+    const byType = typeTiers(black.active ? withSectorBlack(config, black) : config, black.active);
     const tiers = segmentTiers(byType);
     const tiersByPerson = peopleTiers(config.people, byType);
     const segmentPeople = config.people.map((person) => {
@@ -473,8 +478,10 @@ exports.typeOfJob = typeOfJob;
 exports.getMonthTiers = async (month, segment = null) => {
   const configs = (await MonthlyGoalRepository.findByMonth(month)).filter((config) => !segment || config.segment === segment);
   if (!configs.length) return null;
-  const black = blackInfo(month);
-  return sumTiers(configs.map((config) => segmentTiers(typeTiers(black.active ? withSectorBlack(config) : config, black.active))));
+  const black = blackInfo(month, await CampaignService.findAll());
+  return sumTiers(
+    configs.map((config) => segmentTiers(typeTiers(black.active ? withSectorBlack(config, black) : config, black.active))),
+  );
 };
 
 const shiftMonth = (month, amount) => {
@@ -494,10 +501,11 @@ exports.getHistory = async (month, count = 6) => {
   const lastWeeks = ranges[ranges.length - 1].weeks;
   const last = lastWeeks[lastWeeks.length - 1].end;
 
-  const [sales, { vendors }, configsByMonth] = await Promise.all([
+  const [sales, { vendors }, configsByMonth, campaigns] = await Promise.all([
     SalesRepository.findActiveByRealizedAt(startOfDay(first), new Date(startOfDay(addDays(last, 1)).getTime() - 1)),
     loadPeopleContext(),
     Promise.all(ranges.map((item) => MonthlyGoalRepository.findByMonth(item.month))),
+    CampaignService.findAll(),
   ]);
 
   const monthOfDay = (day) =>
@@ -515,10 +523,11 @@ exports.getHistory = async (month, count = 6) => {
 
   return {
     month,
-    black: blackInfo(month),
+    black: blackInfo(month, campaigns),
     months: ranges.map((item, index) => {
       const configs = configsByMonth[index];
-      const isBlack = item.month === BLACK_MONTH;
+      const itemBlack = blackInfo(item.month, campaigns);
+      const isBlack = itemBlack.active;
       const realizedOf = (vendorId, type) => cents[index].get(`${vendorId}-${type}`) ?? 0;
       const people = [];
       const segments = {};
@@ -526,7 +535,7 @@ exports.getHistory = async (month, count = 6) => {
       for (const segment of SEGMENTS) {
         const config = configs.find((entry) => entry.segment === segment);
         if (config) {
-          const byType = typeTiers(isBlack ? withSectorBlack(config) : config, isBlack);
+          const byType = typeTiers(isBlack ? withSectorBlack(config, itemBlack) : config, isBlack);
           const tiersByPerson = peopleTiers(config.people, byType);
           const segmentPeople = config.people.map((person) => ({
             vendorId: String(person.vendorId),
@@ -576,3 +585,10 @@ exports.getHistory = async (month, count = 6) => {
     }),
   };
 };
+
+// Progresso e histórico guardados por alguns segundos (shared/resultCache.js): a área de cada vendedor usa a
+// mesma conta do mês, então muitos vendedores abrindo juntos fazem a conta uma vez só. Gravar metas, vendas,
+// vendedores, times ou campanhas limpa o cache na hora
+const resultCache = require("../../../shared/resultCache");
+exports.getProgress = resultCache.memoize("goals.getProgress", exports.getProgress);
+exports.getHistory = resultCache.memoize("goals.getHistory", exports.getHistory);

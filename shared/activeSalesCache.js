@@ -11,10 +11,17 @@ exports.cached = (key, load) => {
   if (hit && hit.expiresAt > Date.now()) return hit.promise;
 
   const promise = load();
-  entries.set(key, { expiresAt: Date.now() + TTL_MS, promise });
-  promise.catch(() => {
-    if (entries.get(key)?.promise === promise) entries.delete(key);
-  });
+  // Enquanto a busca roda, quem chegar espera por ela; o prazo só começa a contar quando ela termina
+  const entry = { expiresAt: Infinity, promise };
+  entries.set(key, entry);
+  promise.then(
+    () => {
+      entry.expiresAt = Date.now() + TTL_MS;
+    },
+    () => {
+      if (entries.get(key) === entry) entries.delete(key);
+    },
+  );
   return promise;
 };
 

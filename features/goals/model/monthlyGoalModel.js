@@ -50,4 +50,7 @@ const monthlyGoalSchema = new Schema(
 
 monthlyGoalSchema.index({ month: 1, segment: 1 }, { unique: true });
 
+// Gravar aqui limpa o cache dos resultados das contas (shared/resultCache.js)
+require("../../../shared/resultCache").invalidateOnWrite(monthlyGoalSchema);
+
 module.exports = model("MonthlyGoals", monthlyGoalSchema);

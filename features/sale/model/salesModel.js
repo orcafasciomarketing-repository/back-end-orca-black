@@ -1,6 +1,7 @@
 const { Schema, model } = require("mongoose");
 
 const activeSalesCache = require("../../../shared/activeSalesCache");
+const resultCache = require("../../../shared/resultCache");
 
 const saleSchema = new Schema(
   {
@@ -71,12 +72,8 @@ const saleSchema = new Schema(
 saleSchema.index({ dealStatus: 1, realizedAt: 1 });
 saleSchema.index({ vendorId: 1 });
 
-// Qualquer gravação em vendas limpa o cache das vendas ativas (shared/activeSalesCache.js)
-const clearActiveSalesCache = () => activeSalesCache.clear();
-saleSchema.post(["save", "insertMany", "bulkWrite"], clearActiveSalesCache);
-saleSchema.post(
-  ["updateOne", "updateMany", "deleteOne", "deleteMany", "findOneAndUpdate", "findOneAndDelete", "findOneAndReplace", "replaceOne"],
-  clearActiveSalesCache,
-);
+// Qualquer gravação em vendas limpa o cache das vendas ativas (shared/activeSalesCache.js) e o dos
+// resultados das contas (shared/resultCache.js)
+resultCache.invalidateOnWrite(saleSchema, activeSalesCache.clear);
 
 module.exports = model("Sales", saleSchema);

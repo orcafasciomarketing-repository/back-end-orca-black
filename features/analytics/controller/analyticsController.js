@@ -1,6 +1,10 @@
 const AnalyticsService = require("../service/analyticsService");
 const { getRoleSegment } = require("../../../config/roles");
+const CampaignService = require("../../campaigns/service/campaignService");
 const { ValidationError } = require("../../../shared/errors");
+
+// ?campaign=<id>: a campanha escolhida no admin. Sem ele, a ativa (TVs)
+const campaignOf = (req) => CampaignService.resolve(req.query.campaign);
 
 const toSegment = (value) => {
   const segment = String(value ?? "").toLowerCase();
@@ -8,9 +12,10 @@ const toSegment = (value) => {
 };
 
 exports.getGoalProgress = async (req, res, next) => {
+  const campaign = await campaignOf(req);
   const [goalProgress, segments] = await Promise.all([
-    AnalyticsService.getGoalProgress(),
-    AnalyticsService.getSegmentGoalProgress(),
+    AnalyticsService.getGoalProgress(campaign),
+    AnalyticsService.getSegmentGoalProgress(campaign),
   ]);
   const data = { ...goalProgress, segments };
   return res.status(200).json({
@@ -22,7 +27,7 @@ exports.getGoalProgress = async (req, res, next) => {
 
 exports.getScoreboard = async (req, res, next) => {
   const period = req.query.period === "week" ? "week" : "all";
-  const data = await AnalyticsService.getScoreboard(period);
+  const data = await AnalyticsService.getScoreboard(period, await campaignOf(req));
   return res.status(200).json({
     success: true,
     data,
@@ -33,7 +38,7 @@ exports.getScoreboard = async (req, res, next) => {
 exports.getSdrRanking = async (req, res, next) => {
   const { period } = req.query;
   const validPeriod = period === "week" ? "week" : "all";
-  const data = await AnalyticsService.getSdrRanking(validPeriod, toSegment(req.query.segment));
+  const data = await AnalyticsService.getSdrRanking(validPeriod, toSegment(req.query.segment), await campaignOf(req));
   return res.status(200).json({
     success: true,
     data,
@@ -42,7 +47,7 @@ exports.getSdrRanking = async (req, res, next) => {
 };
 
 exports.getLastWeekScoreboard = async (req, res, next) => {
-  const data = await AnalyticsService.getScoreboard("lastWeek");
+  const data = await AnalyticsService.getScoreboard("lastWeek", await campaignOf(req));
   return res.status(200).json({
     success: true,
     data,
@@ -52,7 +57,7 @@ exports.getLastWeekScoreboard = async (req, res, next) => {
 
 exports.getLastWeekVendorRanking = async (req, res, next) => {
   const funnelType = req.query.vendorDepartment === "farm" ? "farm" : "sales";
-  const data = await AnalyticsService.getVendorRanking("lastWeek", funnelType, toSegment(req.query.segment));
+  const data = await AnalyticsService.getVendorRanking("lastWeek", funnelType, toSegment(req.query.segment), await campaignOf(req));
   return res.status(200).json({
     success: true,
     data,
@@ -61,7 +66,7 @@ exports.getLastWeekVendorRanking = async (req, res, next) => {
 };
 
 exports.getLastWeekSdrRanking = async (req, res, next) => {
-  const data = await AnalyticsService.getSdrRanking("lastWeek", toSegment(req.query.segment));
+  const data = await AnalyticsService.getSdrRanking("lastWeek", toSegment(req.query.segment), await campaignOf(req));
   return res.status(200).json({
     success: true,
     data,
@@ -72,7 +77,7 @@ exports.getLastWeekSdrRanking = async (req, res, next) => {
 exports.getVendorRanking = async (req, res, next) => {
   const period = req.query.period === "week" ? "week" : "all";
   const funnelType = req.query.vendorDepartment === "farm" ? "farm" : "sales";
-  const data = await AnalyticsService.getVendorRanking(period, funnelType, toSegment(req.query.segment));
+  const data = await AnalyticsService.getVendorRanking(period, funnelType, toSegment(req.query.segment), await campaignOf(req));
   return res.status(200).json({
     success: true,
     data,
@@ -89,7 +94,7 @@ exports.getForecast = async (req, res, next) => {
   const month = req.query.month === undefined || req.query.month === "" ? null : String(req.query.month);
   if (month !== null && !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw ValidationError("Mês inválido (use AAAA-MM)");
 
-  const data = await AnalyticsService.getForecast(segment, new Date(), month);
+  const data = await AnalyticsService.getForecast(segment, undefined, month, month ? undefined : await campaignOf(req));
   return res.status(200).json({
     success: true,
     data,
@@ -100,7 +105,7 @@ exports.getForecast = async (req, res, next) => {
 exports.getPointsHistory = async (req, res, next) => {
   const segment = getRoleSegment(req.user.role) ?? toSegment(req.query.segment);
 
-  const data = await AnalyticsService.getPointsHistory(segment);
+  const data = await AnalyticsService.getPointsHistory(segment, undefined, await campaignOf(req));
   return res.status(200).json({
     success: true,
     data,
@@ -121,6 +126,7 @@ exports.getPeoplePoints = async (req, res, next) => {
     segment,
     from: toDayKey(req.query.from),
     to: toDayKey(req.query.to),
+    campaign: await campaignOf(req),
   });
   return res.status(200).json({
     success: true,

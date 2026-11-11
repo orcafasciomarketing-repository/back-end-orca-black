@@ -3,14 +3,21 @@ const SalesImportService = require("../service/salesImportService");
 const {
   isValidWebhookSecret,
 } = require("../../../shared/webhookSecretService");
+const CampaignService = require("../../campaigns/service/campaignService");
 const { getRoleSegment } = require("../../../config/roles");
+
+// ?campaign=<id>: só as vendas do período da campanha. Sem ele, as da campanha ativa (como as outras telas)
+const campaignRangeOf = async (req) => {
+  const campaign = await CampaignService.resolve(req.query.campaign);
+  return campaign ? CampaignService.rangeOf(campaign) : undefined;
+};
 
 exports.getAllSales = async (req, res, next) => {
   const page = req.query.page ? Number(req.query.page) : undefined;
   const limit = req.query.limit ? Number(req.query.limit) : undefined;
 
   // b2b e b2g recebem só as vendas do próprio setor (o filtro é no servidor)
-  const sales = await SalesService.findAll(page, limit, getRoleSegment(req.user.role));
+  const sales = await SalesService.findAll(page, limit, getRoleSegment(req.user.role), await campaignRangeOf(req));
   return res.status(200).json({
     success: true,
     data: sales,
@@ -33,7 +40,7 @@ exports.getWeekSales = async (req, res, next) => {
 exports.getSalesByVendor = async (req, res, next) => {
   const { vendorId } = req.params;
 
-  const vendorSales = await SalesService.findByVendor(vendorId, getRoleSegment(req.user.role));
+  const vendorSales = await SalesService.findByVendor(vendorId, getRoleSegment(req.user.role), await campaignRangeOf(req));
   return res.status(200).json({
     success: true,
     data: vendorSales,

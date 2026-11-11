@@ -1,13 +1,20 @@
 const Sales = require("../model/salesModel");
 
+// As listas de vendas abaixo usam leitura leve (.lean()): vão direto para a resposta da API, e o JSON sai igual
+// ao de antes, gastando bem menos CPU
+
+// Período da campanha ({ from, to }, datas do banco): só as vendas feitas nele. Sem período, todas
+const withRange = (filter, range) => (range ? { ...filter, realizedAt: { $gte: range.from, $lte: range.to } } : filter);
+
 // segment: "b2b"/"b2g" traz só as vendas do setor; sem segment, todas
-exports.findAll = async (page, limit, segment) => {
-  const filter = segment ? { segment } : {};
+exports.findAll = async (page, limit, segment, range) => {
+  const filter = withRange(segment ? { segment } : {}, range);
   const hasPagination = page !== undefined && limit !== undefined;
   let query = Sales.find(filter)
     .populate("vendorId")
     .populate("sdrIds")
-    .sort({ createdAt: -1 });
+    .sort({ createdAt: -1 })
+    .lean();
   if (hasPagination) {
     query = query.skip((page - 1) * limit).limit(limit);
   }
@@ -23,7 +30,7 @@ exports.findByPeriod = async (page, limit, startDate, endDate) => {
     realizedAt: { $gte: startDate, $lte: endDate },
   };
   const hasPagination = page !== undefined && limit !== undefined;
-  let query = Sales.find(filter).populate("vendorId").populate("sdrIds");
+  let query = Sales.find(filter).populate("vendorId").populate("sdrIds").lean();
   if (hasPagination) {
     query = query.skip((page - 1) * limit).limit(limit);
   }
@@ -33,43 +40,65 @@ exports.findByPeriod = async (page, limit, startDate, endDate) => {
   };
 };
 
-exports.sumActiveValue = async () => {
+exports.sumActiveValue = async (range) => {
   const [result] = await Sales.aggregate([
-    { $match: { dealStatus: "ativa" } },
+    { $match: withRange({ dealStatus: "ativa" }, range) },
     { $group: { _id: null, total: { $sum: "$value" } } },
   ]);
   return result?.total ?? 0;
 };
 
-exports.sumActiveValueBySegment = async () => {
+exports.sumActiveValueBySegment = async (range) => {
   const results = await Sales.aggregate([
-    { $match: { dealStatus: "ativa" } },
+    { $match: withRange({ dealStatus: "ativa" }, range) },
     { $group: { _id: "$segment", total: { $sum: "$value" } } },
   ]);
   return Object.fromEntries(results.map(({ _id, total }) => [_id, total]));
 };
 
+// Leitura leve (.lean()): objetos simples em vez de documentos do Mongoose, bem mais rápido para ler e somar.
+// Só para contas: quem usa só lê os campos (value, realizedAt, vendorId, sdrIds, segment, funnelType)
 exports.findActiveByRealizedAt = async (startDate, endDate) => {
   const filter = { dealStatus: "ativa" };
   if (startDate && endDate) {
     filter.realizedAt = { $gte: startDate, $lte: endDate };
   }
-  return await Sales.find(filter);
+  return await Sales.find(filter).lean();
 };
 
-exports.findByVendor = async (vendorId, segment) => {
-  const filter = segment ? { vendorId, segment } : { vendorId };
-  const query = Sales.find(filter).populate("vendorId").populate("sdrIds");
+exports.findByVendor = async (vendorId, segment, range) => {
+  const filter = withRange(segment ? { vendorId, segment } : { vendorId }, range);
+  const query = Sales.find(filter).populate("vendorId").populate("sdrIds").lean();
   return {
     data: await query,
     total: await Sales.countDocuments(filter),
   };
 };
 
+// Quantidade e soma das vendas ativas no período (lista de campanhas)
+exports.summarizeActiveBetween = async (from, to) => {
+  const [result] = await Sales.aggregate([
+    { $match: withRange({ dealStatus: "ativa" }, { from, to }) },
+    { $group: { _id: null, count: { $sum: 1 }, total: { $sum: "$value" } } },
+  ]);
+  return { count: result?.count ?? 0, total: result?.total ?? 0 };
+};
+
+// Dia (AAAA-MM-DD, horário de São Paulo) da primeira e da última venda ativa; null sem vendas
+exports.findActiveDayRange = async () => {
+  const [result] = await Sales.aggregate([
+    { $match: { dealStatus: "ativa" } },
+    { $group: { _id: null, first: { $min: "$realizedAt" }, last: { $max: "$realizedAt" } } },
+  ]);
+  if (!result?.first) return null;
+  const dayOf = (date) => new Date(new Date(date).getTime() - 3 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  return { first: dayOf(result.first), last: dayOf(result.last) };
+};
+
 // Vendas em que a pessoa participou da passagem
 exports.findBySdr = async (sdrId) => {
   const filter = { sdrIds: sdrId };
-  const query = Sales.find(filter).populate("vendorId").populate("sdrIds");
+  const query = Sales.find(filter).populate("vendorId").populate("sdrIds").lean();
   return {
     data: await query,
     total: await Sales.countDocuments(filter),

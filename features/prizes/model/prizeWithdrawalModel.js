@@ -25,6 +25,11 @@ const prizeWithdrawalSchema = new Schema(
       type: String,
       required: true,
     },
+    // Campanha da retirada (os prêmios são por campanha). As antigas, sem o campo, recebem a primeira campanha
+    campaignId: {
+      type: Schema.Types.ObjectId,
+      ref: "Campaigns",
+    },
     // E-mail de quem registrou
     createdBy: {
       type: String,
@@ -34,5 +39,9 @@ const prizeWithdrawalSchema = new Schema(
 );
 
 prizeWithdrawalSchema.index({ kind: 1, personId: 1 });
+prizeWithdrawalSchema.index({ campaignId: 1 });
+
+// Gravar aqui limpa o cache dos resultados das contas (shared/resultCache.js)
+require("../../../shared/resultCache").invalidateOnWrite(prizeWithdrawalSchema);
 
 module.exports = model("PrizeWithdrawals", prizeWithdrawalSchema);

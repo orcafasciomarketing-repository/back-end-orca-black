@@ -4,6 +4,7 @@ const PrizeRepository = require("../repository/prizeRepository");
 const AnalyticsService = require("../../analytics/service/analyticsService");
 const VendorsService = require("../../vendors/service/vendorsService");
 const SdrService = require("../../sdr/service/sdrService");
+const CampaignService = require("../../campaigns/service/campaignService");
 const { PRIZE_POINTS_STEP } = require("../../../config/prizes");
 const { ConflictError, NotFoundError } = require("../../../shared/errors");
 const { prizeWeekOf, personKeyOf, buildPrizeSummary } = require("./prizeCalculator");
@@ -21,23 +22,26 @@ const withdrawalsPlural = (amount) => `${amount} ${Math.abs(amount) === 1 ? "pr�
 
 // Saldo de todas as pessoas. Os pontos são os mesmos de "Pontos por pessoa", de todos os setores:
 // o prêmio é da pessoa, não do setor da venda
-exports.getSummary = async (segment = null, now = new Date()) => {
+// campaign: os pontos e as retiradas são da campanha (sem ela, a ativa)
+exports.getSummary = async (segment = null, now = new Date(), campaign) => {
   const week = prizeWeekOf(now);
-  const [all, current, withdrawals] = await Promise.all([
-    AnalyticsService.getPeoplePoints(),
-    AnalyticsService.getPeoplePoints({ from: week.start }),
-    PrizeRepository.findAll(),
+  const current = campaign ?? (await CampaignService.getActive());
+  const [all, currentWeekPoints, withdrawals] = await Promise.all([
+    AnalyticsService.getPeoplePoints({ campaign: current }),
+    AnalyticsService.getPeoplePoints({ from: week.start, campaign: current }),
+    PrizeRepository.findAll(current),
   ]);
 
   const people = buildPrizeSummary({
     allPeople: all.people,
-    currentPeople: current.people,
+    currentPeople: currentWeekPoints.people,
     withdrawals,
     step: PRIZE_POINTS_STEP,
   }).filter(inSegment(segment));
 
   return {
     segment,
+    campaign: current ? { id: current.id, name: current.name } : null,
     step: PRIZE_POINTS_STEP,
     today: week.today,
     currentWeek: { start: week.start, end: week.end },
@@ -47,9 +51,10 @@ exports.getSummary = async (segment = null, now = new Date()) => {
 };
 
 // Histórico de retiradas, com o nome e o cargo de cada pessoa
-exports.getWithdrawals = async (segment = null, { kind, personId } = {}) => {
+exports.getWithdrawals = async (segment = null, { kind, personId } = {}, campaign) => {
+  const current = campaign ?? (await CampaignService.getActive());
   const [withdrawals, vendors, sdrs] = await Promise.all([
-    kind && personId ? PrizeRepository.findByPerson(kind, personId) : PrizeRepository.findAll(),
+    kind && personId ? PrizeRepository.findByPerson(kind, personId, current) : PrizeRepository.findAll(current),
     VendorsService.findAll(),
     SdrService.findAll(),
   ]);
@@ -78,7 +83,9 @@ exports.getWithdrawals = async (segment = null, { kind, personId } = {}) => {
 };
 
 // Acima do saldo só registra com confirmOverBalance (a tela avisa e pede confirmação antes)
-exports.createWithdrawal = async (data, createdBy, now = new Date()) => {
+// A retirada fica na campanha recebida (sem ela, a ativa), e o saldo conferido é o dessa campanha
+exports.createWithdrawal = async (data, createdBy, now = new Date(), campaign) => {
+  const current = campaign ?? (await CampaignService.getActive());
   const { confirmOverBalance, ...withdrawal } = data;
 
   const person =
@@ -87,7 +94,7 @@ exports.createWithdrawal = async (data, createdBy, now = new Date()) => {
       : await SdrService.findById(withdrawal.personId);
   if (!person) throw NotFoundError("Pessoa não encontrada");
 
-  const summary = await exports.getSummary(null, now);
+  const summary = await exports.getSummary(null, now, current);
   const key = personKeyOf(withdrawal.kind, withdrawal.personId);
   const balance = summary.people.find((item) => personKeyOf(item.kind, item.personId) === key)?.balance ?? 0;
 
@@ -96,7 +103,7 @@ exports.createWithdrawal = async (data, createdBy, now = new Date()) => {
     throw ConflictError(`${name} tem saldo de ${withdrawalsPlural(balance)}. Confirme para registrar mesmo assim`);
   }
 
-  return await PrizeRepository.create({ ...withdrawal, createdBy });
+  return await PrizeRepository.create({ ...withdrawal, createdBy, ...(current && { campaignId: current.id }) });
 };
 
 exports.deleteWithdrawal = async (id) => {
@@ -106,3 +113,8 @@ exports.deleteWithdrawal = async (id) => {
 };
 
 exports.segmentOfJob = segmentOfJob;
+
+// Resumo dos prêmios guardado por alguns segundos (shared/resultCache.js); registrar ou excluir uma
+// retirada limpa o cache na hora (gancho no prizeWithdrawalModel.js)
+const resultCache = require("../../../shared/resultCache");
+exports.getSummary = resultCache.memoize("prizes.getSummary", exports.getSummary);

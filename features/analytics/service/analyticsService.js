@@ -2,6 +2,7 @@ const VendorsService = require("../../vendors/service/vendorsService");
 const SalesService = require("../../sale/service/salesService");
 const SdrService = require("../../sdr/service/sdrService");
 const TeamsService = require("../../teams/service/teamsService");
+const CampaignService = require("../../campaigns/service/campaignService");
 
 const { getSalePoints, getPassagePoints } = require("../../../config/points.js");
 const { BLACK_FRIDAY_GOAL, SEGMENT_GOALS } = require("../../../config/goal.js");
@@ -20,17 +21,25 @@ const nextDay = (day) => {
 
 const filterBySegment = (sales, segment) => (segment ? sales.filter((sale) => sale.segment === segment) : sales);
 
-// Meta da Black: o front só exibe, o cálculo fica aqui (fonte única da verdade)
-exports.getGoalProgress = async () => {
-  const total = await SalesService.sumActiveValue();
+// Todas as contas são de uma campanha: a recebida (admin, ?campaign=) ou, sem ela, a ativa (TVs e colaboradores).
+// As vendas da campanha são as do período dela; a meta é a cadastrada nela
+const campaignOf = async (campaign) => campaign ?? (await CampaignService.getActive());
+const rangeOf = (campaign) => (campaign ? CampaignService.rangeOf(campaign) : undefined);
+const salesOf = async (period, campaign) => SalesService.findActiveByPeriod(period, rangeOf(campaign));
+
+// Meta da campanha: o front só exibe, o cálculo fica aqui (fonte única da verdade)
+exports.getGoalProgress = async (campaign) => {
+  const current = await campaignOf(campaign);
+  const total = await SalesService.sumActiveValue(rangeOf(current));
+  const goal = current ? current.goal : BLACK_FRIDAY_GOAL;
 
   // Sem meta configurada, evita divisão por zero
   const percent =
-    BLACK_FRIDAY_GOAL > 0
-      ? Math.round((total / BLACK_FRIDAY_GOAL) * 10000) / 100
+    goal > 0
+      ? Math.round((total / goal) * 10000) / 100
       : 0;
 
-  return { goal: BLACK_FRIDAY_GOAL, total, percent };
+  return { goal, total, percent };
 };
 
 // Sem meta configurada, evita divisão por zero
@@ -38,12 +47,14 @@ const calculatePercent = (total, goal) => (goal > 0 ? Math.round((total / goal) 
 
 // Meta de cada setor (filtros B2B/B2G do admin). Fica separada da meta total
 // para a resposta que a TV usa (goal, total, percent) continuar igual
-exports.getSegmentGoalProgress = async () => {
-  const totals = await SalesService.sumActiveValueBySegment();
+exports.getSegmentGoalProgress = async (campaign) => {
+  const current = await campaignOf(campaign);
+  const totals = await SalesService.sumActiveValueBySegment(rangeOf(current));
+  const goals = current ? current.goals : SEGMENT_GOALS;
 
   const segments = {};
   for (const segment of Object.keys(SEGMENT_GOALS)) {
-    const goal = SEGMENT_GOALS[segment];
+    const goal = goals[segment] ?? 0;
     const total = totals[segment] ?? 0;
     segments[segment] = { goal, total, percent: calculatePercent(total, goal) };
   }
@@ -51,12 +62,13 @@ exports.getSegmentGoalProgress = async () => {
 };
 
 // period: "week", "lastWeek" ou "all" (ver SalesService.findActiveByPeriod)
-exports.getScoreboard = async (period) => {
+exports.getScoreboard = async (period, campaign) => {
+  const current = await campaignOf(campaign);
   const [teams, vendors, sdrs, sales] = await Promise.all([
     TeamsService.findAll(),
     VendorsService.findAll(),
     SdrService.findAll(),
-    SalesService.findActiveByPeriod(period),
+    salesOf(period, current),
   ]);
 
   const vendorTeamMap = new Map(
@@ -107,10 +119,11 @@ exports.getScoreboard = async (period) => {
 };
 
 // funnelType: "sales" (Vendas) ou "farm" (Renovação)
-exports.getVendorRanking = async (period, funnelType, segment = null) => {
+exports.getVendorRanking = async (period, funnelType, segment = null, campaign) => {
+  const current = await campaignOf(campaign);
   const [vendors, periodSales] = await Promise.all([
     VendorsService.findAll(),
-    SalesService.findActiveByPeriod(period),
+    salesOf(period, current),
   ]);
   const sales = filterBySegment(periodSales, segment);
 
@@ -144,10 +157,11 @@ exports.getVendorRanking = async (period, funnelType, segment = null) => {
 };
 
 // Pontos de passagem: cada pessoa da passagem ganha, por venda, os pontos do cargo dela
-exports.getSdrRanking = async (period, segment = null) => {
+exports.getSdrRanking = async (period, segment = null, campaign) => {
+  const current = await campaignOf(campaign);
   const [sdrs, periodSales] = await Promise.all([
     SdrService.findAll(),
-    SalesService.findActiveByPeriod(period),
+    salesOf(period, current),
   ]);
   const sales = filterBySegment(periodSales, segment);
 
@@ -185,22 +199,26 @@ exports.getSdrRanking = async (period, segment = null) => {
 // Sem meta do setor configurada, usa a meta total (goalIsTotal avisa)
 // month (AAAA-MM): forecast do mês da meta (as semanas que começam no mês), só com as vendas do mês e
 // contra a Meta do cadastro de metas (do setor ou a soma; 0 sem meta cadastrada)
-exports.getForecast = async (segment, now = new Date(), month = null) => {
+// campaign: a campanha do forecast (período e metas dela); sem ela, a ativa
+exports.getForecast = async (segment, now = new Date(), month = null, campaign) => {
   if (month) return getMonthForecast(segment, now, month);
 
-  const sales = await SalesService.findActiveByPeriod("all");
-  const segmentSales = segment ? sales.filter((sale) => sale.segment === segment) : sales;
+  const current = await campaignOf(campaign);
+  const sales = await salesOf("all", current);
 
-  const segmentGoal = segment ? SEGMENT_GOALS[segment] : 0;
-  const goal = segmentGoal > 0 ? segmentGoal : BLACK_FRIDAY_GOAL;
+  const goals = current ? current.goals : SEGMENT_GOALS;
+  const totalGoal = current ? current.goal : BLACK_FRIDAY_GOAL;
+  const segmentGoal = segment ? goals[segment] ?? 0 : 0;
+  const goal = segmentGoal > 0 ? segmentGoal : totalGoal;
+  const range = current ? { start: current.start, end: current.end } : {};
 
   // Setor escolhido: o modelo dele. "Todos": a soma do forecast de cada setor, cada um com o seu modelo
   // (venda sem setor entra no B2B)
   return {
     segment,
     goalIsTotal: segment ? !(segmentGoal > 0) : true,
-    period: { type: "campaign" },
-    ...forecastBySegment({ sales, segment, goal, now }),
+    period: { type: "campaign", ...(current && { campaignId: current.id, name: current.name }) },
+    ...forecastBySegment({ sales, segment, goal, now, range }),
   };
 };
 
@@ -232,7 +250,7 @@ async function getMonthForecast(segment, now, month) {
   const start = weeks[0].start;
   const end = weeks[weeks.length - 1].end;
   const [allSales, tiers] = await Promise.all([
-    SalesService.findActiveByPeriod("all"),
+    SalesService.findActiveBetween(new Date(`${start}T03:00:00.000Z`), new Date(new Date(`${end}T03:00:00.000Z`).getTime() + 24 * 60 * 60 * 1000 - 1)),
     MonthlyGoalService.getMonthTiers(month, segment),
   ]);
   const sales = allSales.filter((sale) => {
@@ -250,12 +268,13 @@ async function getMonthForecast(segment, now, month) {
   };
 }
 
-exports.getPointsHistory = async (segment = null, now = new Date()) => {
+exports.getPointsHistory = async (segment = null, now = new Date(), campaign) => {
+  const current = await campaignOf(campaign);
   const [teams, vendors, sdrs, allSales] = await Promise.all([
     TeamsService.findAll(),
     VendorsService.findAll(),
     SdrService.findAll(),
-    SalesService.findActiveByPeriod("all"),
+    salesOf("all", current),
   ]);
   const sales = filterBySegment(allSales, segment);
 
@@ -313,12 +332,13 @@ exports.getPointsHistory = async (segment = null, now = new Date()) => {
 // Pontos de cada pessoa (vendedores e pessoas de passagem), com o time de cada uma.
 // period: "all" | "week" | "lastWeek"; from/to (AAAA-MM-DD, horário de São Paulo) recortam ainda mais.
 // Quem não pontuou também aparece, com 0
-exports.getPeoplePoints = async ({ period = "all", segment = null, from = null, to = null } = {}) => {
+exports.getPeoplePoints = async ({ period = "all", segment = null, from = null, to = null, campaign } = {}) => {
+  const current = await campaignOf(campaign);
   const [teams, vendors, sdrs, periodSales] = await Promise.all([
     TeamsService.findAll(),
     VendorsService.findAll(),
     SdrService.findAll(),
-    SalesService.findActiveByPeriod(period),
+    salesOf(period, current),
   ]);
   const sales = filterBySegment(periodSales, segment).filter((sale) => {
     const day = dayKeyOf(sale.realizedAt);
@@ -373,3 +393,19 @@ exports.getPeoplePoints = async ({ period = "all", segment = null, from = null, 
     people,
   };
 };
+
+// Resultados guardados por alguns segundos (shared/resultCache.js): várias telas pedindo a mesma conta ao
+// mesmo tempo fazem a conta uma vez só
+const resultCache = require("../../../shared/resultCache");
+for (const name of [
+  "getGoalProgress",
+  "getSegmentGoalProgress",
+  "getScoreboard",
+  "getVendorRanking",
+  "getSdrRanking",
+  "getForecast",
+  "getPointsHistory",
+  "getPeoplePoints",
+]) {
+  exports[name] = resultCache.memoize(`analytics.${name}`, exports[name]);
+}

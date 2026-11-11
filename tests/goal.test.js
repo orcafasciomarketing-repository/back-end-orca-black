@@ -6,10 +6,13 @@ process.env.BLACK_FRIDAY_GOAL = "0";
 
 const SalesService = require("../features/sale/service/salesService");
 const AnalyticsService = require("../features/analytics/service/analyticsService");
+const CampaignService = require("../features/campaigns/service/campaignService");
 
 describe("AnalyticsService.getGoalProgress sem meta configurada", () => {
   it("percent 0 (não divide por zero) e total continua vindo", async () => {
     mock.method(SalesService, "sumActiveValue", async () => 1500);
+    // Sem campanha cadastrada (sem banco): vale a meta do .env
+    mock.method(CampaignService, "getActive", async () => null);
 
     const result = await AnalyticsService.getGoalProgress();
 
