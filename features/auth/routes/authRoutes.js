@@ -5,6 +5,7 @@ const authController = require("../controller/authController");
 const { validateSchema } = require("../../../middlewares/schemaValidationMiddleware");
 const { authMiddleware } = require("../../../middlewares/authMidleware");
 const { failedLoginLimit } = require("../../../middlewares/rateLimitMiddleware");
+const { requireMaster } = require("../../../middlewares/roleMiddleware");
 const { ChangePasswordSchema, LoginSchema } = require("../schemas/authSchemas");
 
 // Não existe mais cadastro aberto: quem cadastra usuário é o admin (POST /users)
@@ -22,5 +23,8 @@ router.post(
   validateSchema(ChangePasswordSchema),
   authController.changePassword,
 );
+
+// "Acessar como": só o master, só contas de vendedor e passagem, só para ver (ver authMidleware)
+router.post("/impersonate/:id", authMiddleware, requireMaster, authController.impersonate);
 
 module.exports = router;

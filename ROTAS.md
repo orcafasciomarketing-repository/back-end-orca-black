@@ -16,6 +16,7 @@ Erros passam pelo handler global e retornam `{ "error": "mensagem" }` com o stat
 | POST | `/auth/refresh` | Pública (exige cookie) | cookie `refreshToken` | `refreshUserTokens` → `refreshUserTokens` |
 | POST | `/auth/logout` | Pública (usa o cookie, se houver) | cookie `refreshToken` | `logoutUser` → `logoutUser` |
 | POST | `/auth/change-password` | **Privada** (JWT; qualquer perfil, só a própria senha) | body | `changePassword` → `changePassword` |
+| POST | `/auth/impersonate/:id` | **Só master** | path `id` (usuário vendedor ou passagem) | `impersonate` → `impersonate` |
 | GET | `/sales/admin` | **Privada** (JWT; b2b/b2g só o setor; vendor/sdr → 403) | query `page`, `limit` | `getAllSales` → `findAll` |
 | GET | `/sales/get` | Pública | query `page`, `limit` | `getWeekSales` → `findActiveByWeek` |
 | GET | `/sales/get/:vendorId` | **Privada** (JWT; b2b/b2g só o setor; vendor/sdr → 403) | path `vendorId` | `getSalesByVendor` → `findByVendor` |
@@ -168,6 +169,17 @@ Qualquer perfil logado troca **a própria** senha: o usuário vem do token, não
 Derruba todas as sessões abertas da pessoa (refresh tokens revogados) e abre uma sessão nova para quem trocou: grava o cookie `refreshToken` novo e devolve um access token novo, então a pessoa continua logada neste navegador.
 
 **Resposta:** `200 { user, token, message: "Senha alterada" }`
+
+---
+
+### `POST /auth/impersonate/:id` — Só master
+
+"Acessar como": o master vê o sistema como um vendedor ou uma pessoa de passagem veem (Minha área e Minhas metas). Responde `{ user, token }`: o usuário da pessoa (sem a senha) e um **access token da conta dela, marcado com o id do master** (`impersonatedBy`), que vale 60 minutos. **Não cria sessão nem mexe no cookie** do master: para voltar, o front usa a sessão do master de novo (`/auth/refresh`).
+
+- Só o master (admin, b2b, b2g e colaboradores → `403`; sem login → `401`). Só contas `vendor` e `sdr` (outro perfil → `400` "Só dá para acessar como vendedor ou passagem"); usuário que não existe ou id inválido → `404`.
+- **Só para ver:** com esse token, o `authMiddleware` recusa qualquer requisição que não seja `GET` com `403` ("No modo \"acessar como\" dá só para ver"), inclusive trocar a senha da pessoa e abrir outro "acessar como".
+- A cada requisição o `authMiddleware` confere que quem abriu ainda existe e ainda é o master; se não, `401` ("Acesso como outra pessoa encerrado").
+- O backend registra no log do servidor quem entrou como quem (`[acessar como] master@... entrou como fulano@...`).
 
 ---
 

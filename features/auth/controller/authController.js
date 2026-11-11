@@ -37,6 +37,12 @@ exports.logoutUser = async (req, res) => {
   res.status(200).json({ success: true, message: "Sessão encerrada" });
 };
 
+exports.impersonate = async (req, res) => {
+  const { user, token } = await authService.impersonate(req.user, req.params.id);
+  console.log(`[acessar como] ${req.user.email} entrou como ${user.email}`);
+  res.status(200).json({ user, token });
+};
+
 exports.changePassword = async (req, res) => {
   const { user, token, refreshToken, expiration } = await authService.changePassword(req.user.id, req.data);
   setRefreshTokenCookie(res, refreshToken, expiration);

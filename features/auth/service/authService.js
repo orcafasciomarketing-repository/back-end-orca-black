@@ -2,7 +2,9 @@ const UserService = require("../../user/service/userService");
 const AccessTokenService = require("../../../shared/accessTokenService");
 const RefreshTokenService = require("../../token/service/tokenService");
 const passwordService = require("../../security/service/passwordService");
-const { NotFoundError, UnauthorizedError, ValidationError } = require("../../../shared/errors");
+const { ForbiddenError, NotFoundError, UnauthorizedError, ValidationError } = require("../../../shared/errors");
+const { isPersonRole } = require("../../../config/roles");
+const { isValidObjectId } = require("mongoose");
 
 // Sem cookie ou com token que já não vale: não faz nada (sair sempre dá certo)
 exports.logoutUser = async (refreshToken) => {
@@ -68,6 +70,20 @@ exports.loginUser = async (userData) => {
     token: accessToken,
     refreshToken: refreshToken.token,
     expiration: refreshToken.expiresAt,
+  };
+};
+
+// "Acessar como": o master recebe um access token da conta do colaborador (vendedor ou passagem), marcado com
+// o id dele. Não cria sessão nem mexe no cookie do master: voltar é só usar a sessão dele de novo
+exports.impersonate = async (master, targetId) => {
+  if (master.impersonatedBy) throw ForbiddenError("Volte para a sua conta antes de acessar como outra pessoa");
+  const target = isValidObjectId(targetId) ? await UserService.findUserById(targetId) : null;
+  if (!target) throw NotFoundError("Usuário não encontrado");
+  if (!isPersonRole(target.role)) throw ValidationError("Só dá para acessar como vendedor ou passagem");
+
+  return {
+    user: UserService.toPublicUser(target),
+    token: AccessTokenService.generateAccessToken({ id: target._id, email: target.email, impersonatedBy: master.id }),
   };
 };
 
